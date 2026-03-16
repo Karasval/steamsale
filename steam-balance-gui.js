@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 const path = require('path');
-const { parseCredentialsFile, fetchSteamBalance } = require('./steam-balance-core');
+const { parseCredentialsFile, fetchSteamBalance, getDependency } = require('./steam-balance-core');
 
 async function main() {
-  const dialog = require('node-file-dialog');
+  const dialog = getDependency('node-file-dialog');
 
   const [credentialsPath] = await dialog({
     type: 'open-file',

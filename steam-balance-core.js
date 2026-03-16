@@ -1,7 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const SteamUser = require('steam-user');
-const SteamTotp = require('steam-totp');
 
 const CURRENCY_SYMBOLS = {
   1: 'USD',
@@ -46,6 +44,22 @@ const CURRENCY_SYMBOLS = {
   9000: 'RMB'
 };
 
+function getDependency(name) {
+  try {
+    return require(name);
+  } catch (error) {
+    if (error && error.code === 'MODULE_NOT_FOUND') {
+      throw new Error(
+        `Не найдена зависимость "${name}". Выполните:\n` +
+        'npm install\n' +
+        'или если используете только GUI-режим:\n' +
+        `npm install ${name}`
+      );
+    }
+    throw error;
+  }
+}
+
 function resolvePath(filePath) {
   if (!filePath) return '';
   return path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
@@ -78,6 +92,9 @@ async function fetchSteamBalance({ login, password, maFilePath, outputFilePath }
   if (!login || !password || !maFilePath || !outputFilePath) {
     throw new Error('Нужны login, password, maFilePath и outputFilePath');
   }
+
+  const SteamUser = getDependency('steam-user');
+  const SteamTotp = getDependency('steam-totp');
 
   const maData = loadMaFile(maFilePath);
   const twoFactorCode = SteamTotp.generateAuthCode(maData.shared_secret);
@@ -169,5 +186,6 @@ function parseCredentialsFile(credentialsPath) {
 module.exports = {
   fetchSteamBalance,
   parseCredentialsFile,
-  resolvePath
+  resolvePath,
+  getDependency
 };
