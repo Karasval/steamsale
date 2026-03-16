@@ -1,15 +1,17 @@
 {
   "name": "steamsale",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Steam wallet balance parser",
   "main": "steam-balance.js",
   "type": "commonjs",
   "scripts": {
     "start": "node steam-balance.js",
-    "check": "node --check steam-balance.js"
+    "gui": "node steam-balance-gui.js",
+    "check": "node --check steam-balance.js && node --check steam-balance-core.js && node --check steam-balance-gui.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "node-file-dialog": "^1.0.3",
     "steam-totp": "^2.1.2",
     "steam-user": "^5.1.0"
   }
