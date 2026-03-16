@@ -88,6 +88,123 @@ function appendResult(outputPath, resultLine) {
   fs.appendFileSync(outputPath, `${resultLine}\n`, 'utf8');
 }
 
+function normalizeWalletInfo({ hasWallet, balance, currencyCode }) {
+  if (typeof hasWallet !== 'boolean') {
+    throw new Error('Не удалось определить наличие кошелька Steam.');
+  }
+
+  if (!hasWallet) {
+    return { hasWallet: false, balance: 0, currencyCode: 0 };
+  }
+
+  if (!Number.isFinite(balance) || !Number.isFinite(currencyCode)) {
+    throw new Error('Не удалось получить корректные данные баланса/валюты.');
+  }
+
+  return {
+    hasWallet,
+    balance: Number(balance),
+    currencyCode: Number(currencyCode)
+  };
+}
+
+function parseWalletEventArgs(args) {
+  if (!Array.isArray(args) || args.length < 3) {
+    throw new Error('Steam вернул неизвестный формат wallet-события.');
+  }
+
+  const hasWallet = Boolean(args[0]);
+  const second = Number(args[1]);
+  const third = Number(args[2]);
+
+  if (!Number.isFinite(second) || !Number.isFinite(third)) {
+    throw new Error('Steam вернул некорректные числовые значения wallet-события.');
+  }
+
+  // В разных версиях steam-user порядок полей отличается:
+  // (hasWallet, balance, currencyCode) или (hasWallet, currencyCode, balance)
+  const secondLooksCurrency = second > 0 && second < 10000 && !!CURRENCY_SYMBOLS[second];
+  const thirdLooksCurrency = third > 0 && third < 10000 && !!CURRENCY_SYMBOLS[third];
+
+  if (secondLooksCurrency && !thirdLooksCurrency) {
+    return normalizeWalletInfo({ hasWallet, balance: third, currencyCode: second });
+  }
+
+  if (thirdLooksCurrency && !secondLooksCurrency) {
+    return normalizeWalletInfo({ hasWallet, balance: second, currencyCode: third });
+  }
+
+  // fallback: старое поведение
+  return normalizeWalletInfo({ hasWallet, balance: second, currencyCode: third });
+}
+
+function getWalletFromProperty(client) {
+  const wallet = client && client.wallet;
+  if (!wallet || typeof wallet !== 'object') {
+    return null;
+  }
+
+  const hasWallet = typeof wallet.hasWallet === 'boolean' ? wallet.hasWallet : null;
+  const balance = Number(wallet.balance);
+  const currencyCode = Number(wallet.currencyCode || wallet.currency);
+
+  if (hasWallet === null || !Number.isFinite(balance) || !Number.isFinite(currencyCode)) {
+    return null;
+  }
+
+  return normalizeWalletInfo({ hasWallet, balance, currencyCode });
+}
+
+function getWalletViaMethod(client) {
+  return new Promise((resolve, reject) => {
+    client.getWalletBalance((hasWallet, balance, currencyCode) => {
+      try {
+        resolve(normalizeWalletInfo({ hasWallet, balance, currencyCode }));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+function getWalletViaEvent(client, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Не дождались wallet-события от Steam. Попробуйте снова.'));
+    }, timeoutMs);
+
+    const onWallet = (...args) => {
+      cleanup();
+      try {
+        resolve(parseWalletEventArgs(args));
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      client.off('wallet', onWallet);
+    };
+
+    client.on('wallet', onWallet);
+  });
+}
+
+async function readWalletInfo(client) {
+  if (typeof client.getWalletBalance === 'function') {
+    return getWalletViaMethod(client);
+  }
+
+  const fromProperty = getWalletFromProperty(client);
+  if (fromProperty) {
+    return fromProperty;
+  }
+
+  return getWalletViaEvent(client);
+}
+
 async function fetchSteamBalance({ login, password, maFilePath, outputFilePath }) {
   if (!login || !password || !maFilePath || !outputFilePath) {
     throw new Error('Нужны login, password, maFilePath и outputFilePath');
@@ -114,23 +231,28 @@ async function fetchSteamBalance({ login, password, maFilePath, outputFilePath }
       finish(new Error(`Ошибка Steam-клиента: ${err.message || err}`));
     });
 
-    client.on('loggedOn', () => {
-      client.getWalletBalance((hasWallet, balance, currencyCode) => {
-        if (!hasWallet) {
+    client.on('loggedOn', async () => {
+      try {
+        const walletInfo = await readWalletInfo(client);
+
+        if (!walletInfo.hasWallet) {
           finish(new Error('У аккаунта отсутствует Steam-кошелёк'));
           client.logOff();
           return;
         }
 
-        const currency = CURRENCY_SYMBOLS[currencyCode] || `UNKNOWN(${currencyCode})`;
-        const formattedBalance = formatBalance(balance);
+        const currency = CURRENCY_SYMBOLS[walletInfo.currencyCode] || `UNKNOWN(${walletInfo.currencyCode})`;
+        const formattedBalance = formatBalance(walletInfo.balance);
         const timestamp = new Date().toISOString();
         const line = `${timestamp} | login=${login} | balance=${formattedBalance} | currency=${currency}`;
 
         appendResult(resolvePath(outputFilePath), line);
         finish(null, { line, outputFilePath: resolvePath(outputFilePath) });
+      } catch (error) {
+        finish(error);
+      } finally {
         client.logOff();
-      });
+      }
     });
 
     client.logOn({
@@ -187,5 +309,7 @@ module.exports = {
   fetchSteamBalance,
   parseCredentialsFile,
   resolvePath,
-  getDependency
+  getDependency,
+  readWalletInfo,
+  parseWalletEventArgs
 };
