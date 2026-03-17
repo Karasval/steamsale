@@ -14,25 +14,76 @@ function extractSessionIDFromCookies(cookies) {
   return raw.split(';')[0].slice('sessionid='.length);
 }
 
+function buildMarketRequestOptions(community, sessionID, assetid, appid, contextid, priceInCents) {
+  const steamID = String(community.steamID || '');
+
+  return {
+    method: 'POST',
+    uri: 'https://steamcommunity.com/market/sellitem/',
+    form: {
+      sessionid: String(sessionID),
+      appid: String(appid),
+      contextid: String(contextid),
+      assetid: String(assetid),
+      amount: '1',
+      price: String(priceInCents),
+    },
+    headers: {
+      Origin: 'https://steamcommunity.com',
+      Referer: steamID
+        ? `https://steamcommunity.com/profiles/${steamID}/inventory/`
+        : 'https://steamcommunity.com/market/',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+    gzip: true,
+  };
+}
+
+function parsePayload(body) {
+  if (!body) return {};
+  if (typeof body === 'object') return body;
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    return { raw: String(body) };
+  }
+}
+
 async function createListingViaHttp(community, sessionID, assetid, appid, contextid, priceInCents) {
   if (!sessionID) {
     throw new Error('Для HTTP fallback нужен sessionID');
   }
 
   console.log('ℹ️ Использую HTTP fallback: POST /market/sellitem/');
+  const requestOptions = buildMarketRequestOptions(
+    community,
+    sessionID,
+    assetid,
+    appid,
+    contextid,
+    priceInCents
+  );
 
-  const requestOptions = {
-    method: 'POST',
-    uri: 'https://steamcommunity.com/market/sellitem/',
-    form: {
-      sessionid: sessionID,
-      appid,
-      contextid,
-      assetid,
-      amount: 1,
-      price: priceInCents,
-    },
-    json: true,
+  const handleResponse = (response, body, resolve, reject) => {
+    const statusCode = response?.statusCode || 0;
+    const payload = parsePayload(body ?? response?.body);
+
+    if (statusCode >= 400) {
+      reject(
+        new Error(
+          `HTTP error ${statusCode}. response=${JSON.stringify(payload)}`
+        )
+      );
+      return;
+    }
+
+    if (payload?.success !== true && payload?.success !== 1) {
+      reject(new Error(`Market API error: ${JSON.stringify(payload)}`));
+      return;
+    }
+
+    resolve(payload);
   };
 
   if (typeof community.httpRequest === 'function') {
@@ -43,13 +94,7 @@ async function createListingViaHttp(community, sessionID, assetid, appid, contex
           return;
         }
 
-        const payload = body || response?.body || {};
-        if (payload?.success !== true && payload?.success !== 1) {
-          reject(new Error(`Market API error: ${JSON.stringify(payload)}`));
-          return;
-        }
-
-        resolve(payload);
+        handleResponse(response, body, resolve, reject);
       });
     });
   }
@@ -62,13 +107,7 @@ async function createListingViaHttp(community, sessionID, assetid, appid, contex
           return;
         }
 
-        const payload = body || response?.body || {};
-        if (payload?.success !== true && payload?.success !== 1) {
-          reject(new Error(`Market API error: ${JSON.stringify(payload)}`));
-          return;
-        }
-
-        resolve(payload);
+        handleResponse(response, body, resolve, reject);
       });
     });
   }
@@ -111,15 +150,6 @@ async function createListing(community, sessionID, assetid, appid, contextid, pr
 
 /**
  * Выставляет предмет на продажу и подтверждает листинг.
- *
- * @param {import('steamcommunity')} community
- * @param {string} itemName
- * @param {number|string} targetPrice
- * @param {string} identitySecret
- * @param {number|string} [appid=730]
- * @param {number|string} [contextid=2]
- * @param {string|null} [sessionID=null]
- * @returns {Promise<boolean>}
  */
 async function sellItem(
   community,
@@ -174,7 +204,14 @@ async function sellItem(
       throw new Error(`Некорректная цена: ${targetPrice}`);
     }
 
-    const effectiveSessionID = sessionID || extractSessionIDFromCookies(community._cookies || []);
+    const effectiveSessionID =
+      sessionID ||
+      community.sessionID ||
+      extractSessionIDFromCookies(community._cookies || []);
+
+    if (!effectiveSessionID) {
+      throw new Error('Не удалось определить sessionID для выставления лота');
+    }
 
     console.log(`📤 Выставление предмета (assetid: ${assetid}) за ${priceInCents}`);
     await createListing(community, effectiveSessionID, assetid, appid, contextid, priceInCents);

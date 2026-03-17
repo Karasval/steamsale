@@ -176,6 +176,7 @@ async function main() {
 
       // Гарантируем steamID для market-модуля, даже если setCookies не успел его проставить.
       community.steamID = client.steamID;
+      community.sessionID = authResult.sessionID;
       console.log(`🆔 [${account.login}] steamID установлен: ${community.steamID}`);
 
       const result = await sellItem(
