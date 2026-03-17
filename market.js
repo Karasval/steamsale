@@ -1,3 +1,5 @@
+const SteamTotp = require('steam-totp');
+
 /**
  * Пауза в миллисекундах.
  */
@@ -110,8 +112,83 @@ async function acceptListingConfirmation(community, identitySecret, objectIDs) {
     }
   }
 
+  // Последний fallback: сканируем список подтверждений и берем свежее market-подтверждение.
+  console.log('⚠️ По objectID подтверждение не найдено, пробую scan fallback...');
+  await acceptMarketConfirmationByScan(community, identitySecret);
+  return true;
+}
+
+
+async function getTimeOffsetSeconds() {
+  return new Promise((resolve, reject) => {
+    SteamTotp.getTimeOffset((err, offset) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(offset || 0);
+    });
+  });
+}
+
+async function loadConfirmations(community, identitySecret) {
+  if (typeof community.getConfirmations !== 'function') {
+    throw new Error('Метод community.getConfirmations недоступен');
+  }
+
+  const offset = await getTimeOffsetSeconds();
+  const time = Math.floor(Date.now() / 1000) + offset;
+  const confKey = SteamTotp.getConfirmationKey(identitySecret, time, 'conf');
+
+  return new Promise((resolve, reject) => {
+    community.getConfirmations(time, confKey, (err, confirmations) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(confirmations || []);
+    });
+  });
+}
+
+async function acceptMarketConfirmationByScan(community, identitySecret) {
+  const confirmations = await loadConfirmations(community, identitySecret);
+
+  const marketConfirmations = confirmations.filter((c) => {
+    const type = Number(c?.type);
+    const typeName = String(c?.typeName || c?.type_name || '').toLowerCase();
+    return type === 3 || typeName.includes('market') || typeName.includes('listing');
+  });
+
+  if (marketConfirmations.length === 0) {
+    throw new Error('В списке подтверждений нет market/listing подтверждений');
+  }
+
+  // Берем самое свежее market-подтверждение
+  const target = marketConfirmations[0];
+  const fallbackIDs = [target?.creator, target?.id].filter(Boolean).map((v) => String(v));
+
+  for (const objectID of fallbackIDs) {
+    try {
+      await new Promise((resolve, reject) => {
+        community.acceptConfirmationForObject(identitySecret, objectID, (err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      });
+
+      console.log(`✅ Подтверждение принято через scan fallback (objectID=${objectID})`);
+      return true;
+    } catch (_e) {
+      // Пробуем следующий fallback ID
+    }
+  }
+
   throw new Error(
-    `Не удалось найти подтверждение для objectID: ${objectIDs.join(', ')}`
+    `Не удалось подтвердить через scan fallback. confirmation.id=${target?.id}, creator=${target?.creator}`
   );
 }
 
