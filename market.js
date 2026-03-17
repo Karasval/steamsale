@@ -5,10 +5,81 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function extractSessionIDFromCookies(cookies) {
+  if (!Array.isArray(cookies)) return null;
+
+  const raw = cookies.find((c) => typeof c === 'string' && c.startsWith('sessionid='));
+  if (!raw) return null;
+
+  return raw.split(';')[0].slice('sessionid='.length);
+}
+
+async function createListingViaHttp(community, sessionID, assetid, appid, contextid, priceInCents) {
+  if (!sessionID) {
+    throw new Error('Для HTTP fallback нужен sessionID');
+  }
+
+  console.log('ℹ️ Использую HTTP fallback: POST /market/sellitem/');
+
+  const requestOptions = {
+    method: 'POST',
+    uri: 'https://steamcommunity.com/market/sellitem/',
+    form: {
+      sessionid: sessionID,
+      appid,
+      contextid,
+      assetid,
+      amount: 1,
+      price: priceInCents,
+    },
+    json: true,
+  };
+
+  if (typeof community.httpRequest === 'function') {
+    return new Promise((resolve, reject) => {
+      community.httpRequest(requestOptions, (err, response, body) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        const payload = body || response?.body || {};
+        if (payload?.success !== true && payload?.success !== 1) {
+          reject(new Error(`Market API error: ${JSON.stringify(payload)}`));
+          return;
+        }
+
+        resolve(payload);
+      });
+    });
+  }
+
+  if (community.request && typeof community.request.post === 'function') {
+    return new Promise((resolve, reject) => {
+      community.request.post(requestOptions, (err, response, body) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        const payload = body || response?.body || {};
+        if (payload?.success !== true && payload?.success !== 1) {
+          reject(new Error(`Market API error: ${JSON.stringify(payload)}`));
+          return;
+        }
+
+        resolve(payload);
+      });
+    });
+  }
+
+  throw new Error('В текущем steamcommunity нет методов для HTTP-запроса (httpRequest/request.post)');
+}
+
 /**
  * Унифицированное выставление лота для разных версий steamcommunity.
  */
-async function createListing(community, assetid, appid, contextid, priceInCents) {
+async function createListing(community, sessionID, assetid, appid, contextid, priceInCents) {
   if (typeof community.sellItem === 'function') {
     console.log('ℹ️ Использую community.sellItem(...)');
     return new Promise((resolve, reject) => {
@@ -35,9 +106,7 @@ async function createListing(community, assetid, appid, contextid, priceInCents)
     });
   }
 
-  throw new Error(
-    'Ни sellItem, ни createMarketListing не доступны в текущей версии steamcommunity'
-  );
+  return createListingViaHttp(community, sessionID, assetid, appid, contextid, priceInCents);
 }
 
 /**
@@ -49,6 +118,7 @@ async function createListing(community, assetid, appid, contextid, priceInCents)
  * @param {string} identitySecret
  * @param {number|string} [appid=730]
  * @param {number|string} [contextid=2]
+ * @param {string|null} [sessionID=null]
  * @returns {Promise<boolean>}
  */
 async function sellItem(
@@ -57,7 +127,8 @@ async function sellItem(
   targetPrice,
   identitySecret,
   appid = 730,
-  contextid = 2
+  contextid = 2,
+  sessionID = null
 ) {
   try {
     if (!community) {
@@ -103,8 +174,10 @@ async function sellItem(
       throw new Error(`Некорректная цена: ${targetPrice}`);
     }
 
+    const effectiveSessionID = sessionID || extractSessionIDFromCookies(community._cookies || []);
+
     console.log(`📤 Выставление предмета (assetid: ${assetid}) за ${priceInCents}`);
-    await createListing(community, assetid, appid, contextid, priceInCents);
+    await createListing(community, effectiveSessionID, assetid, appid, contextid, priceInCents);
 
     console.log('⏳ Ждем 3 секунды перед подтверждением...');
     await sleep(3000);

@@ -8,7 +8,7 @@ const SteamTotp = require('steam-totp');
  * @param {string} login
  * @param {string} password
  * @param {string} sharedSecret
- * @returns {Promise<{client: import('steam-user'), cookies: string[]}>}
+ * @returns {Promise<{client: import('steam-user'), cookies: string[], sessionID: string}>}
  */
 function authorize(login, password, sharedSecret) {
   return new Promise((resolve, reject) => {
@@ -42,12 +42,12 @@ function authorize(login, password, sharedSecret) {
       reject(error);
     };
 
-    const succeed = (cookies) => {
+    const succeed = (cookies, sessionID) => {
       if (settled) return;
       settled = true;
       cleanup();
       // Выносим resolve в следующий тик, чтобы гарантировать переход дальше по цепочке await.
-      setImmediate(() => resolve({ client: user, cookies }));
+      setImmediate(() => resolve({ client: user, cookies, sessionID }));
     };
 
     const loginTimeout = setTimeout(() => {
@@ -74,10 +74,10 @@ function authorize(login, password, sharedSecret) {
       }, 5000);
     };
 
-    const onWebSession = (_sessionID, cookies) => {
+    const onWebSession = (sessionID, cookies) => {
       stopTimeout();
       console.log(`🍪 [${login}] webSession получена`);
-      succeed(cookies);
+      succeed(cookies, sessionID);
     };
 
     user.on('error', onError);

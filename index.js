@@ -166,6 +166,7 @@ async function main() {
         sharedSecret
       );
       console.log(`✅ [${account.login}] Авторизация завершена, продолжаю к продаже...`);
+      console.log(`🧾 [${account.login}] sessionID: ${authResult.sessionID}`);
 
       client = authResult.client;
 
@@ -183,7 +184,8 @@ async function main() {
         targetPrice,
         identitySecret,
         730,
-        2
+        2,
+        authResult.sessionID
       );
 
       console.log(`📌 Результат [${account.login}]: ${result ? 'успех' : 'неуспех'}`);
