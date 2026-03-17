@@ -15,6 +15,7 @@ const authState = {
 
 /**
  * Выполняет вход в Steam с поддержкой 2FA через sharedSecret.
+ * Перед генерацией кода синхронизируем время через SteamTotp.getTimeOffset().
  *
  * Ожидает переменные окружения:
  * - STEAM_ACCOUNT_NAME
@@ -32,22 +33,27 @@ function login() {
     );
   }
 
-  // Генерируем одноразовый 2FA-код (Steam Guard) из sharedSecret
-  const twoFactorCode = SteamTotp.generateAuthCode(sharedSecret);
+  // Синхронизируем время с серверами Steam для корректной генерации 2FA-кода
+  SteamTotp.getTimeOffset((error, offset) => {
+    if (error) {
+      console.error('❌ Не удалось синхронизировать время Steam:', error);
+      return;
+    }
 
-  client.logOn({
-    accountName,
-    password,
-    twoFactorCode,
+    // Генерируем одноразовый 2FA-код (Steam Guard) с учетом смещения времени
+    const twoFactorCode = SteamTotp.generateAuthCode(sharedSecret, offset);
+
+    client.logOn({
+      accountName,
+      password,
+      twoFactorCode,
+    });
   });
 }
 
 // Срабатывает после успешного входа в аккаунт Steam
 client.on('loggedOn', () => {
   console.log('✅ Успешный вход в Steam');
-
-  // Запрашиваем веб-сессию (нужна для работы с Community/Market/TradeOfferManager)
-  client.webLogOn();
 });
 
 // Получаем cookies и sessionID веб-сессии для других модулей
