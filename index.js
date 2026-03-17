@@ -51,25 +51,59 @@ async function readAccounts() {
 }
 
 async function getMaFileData(login) {
-  const maDir = path.join(__dirname, 'maFiles');
-  const files = await fs.readdir(maDir);
+  const normalizedLogin = String(login).trim().toLowerCase();
 
-  for (const fileName of files) {
-    if (!fileName.endsWith('.json')) continue;
+  // Поддерживаем несколько популярных названий папки с maFile.
+  const candidateDirs = [
+    path.join(__dirname, 'maFiles'),
+    path.join(__dirname, 'mafiles'),
+    path.join(__dirname, 'mafiles', 'MaFiles'),
+    path.join(__dirname, 'мафайлы'),
+    path.join(__dirname, 'мафайлов'),
+  ];
 
-    const fullPath = path.join(maDir, fileName);
-    const parsed = JSON.parse(await fs.readFile(fullPath, 'utf8'));
+  let checkedDirs = [];
 
-    if (parsed.account_name === login) {
-      return {
-        sharedSecret: parsed.shared_secret,
-        identitySecret: parsed.identity_secret,
-      };
+  for (const maDir of candidateDirs) {
+    try {
+      const files = await fs.readdir(maDir);
+      checkedDirs.push(maDir);
+
+      for (const fileName of files) {
+        // Берем любые потенциальные maFile, не только .json
+        if (!fileName.endsWith('.json') && !fileName.endsWith('.maFile')) continue;
+
+        const fullPath = path.join(maDir, fileName);
+        const parsed = JSON.parse(await fs.readFile(fullPath, 'utf8'));
+
+        const accountName = String(parsed.account_name || '').trim().toLowerCase();
+        if (accountName === normalizedLogin) {
+          if (!parsed.shared_secret || !parsed.identity_secret) {
+            throw new Error(`В maFile ${fileName} нет shared_secret или identity_secret`);
+          }
+
+          return {
+            sharedSecret: parsed.shared_secret,
+            identitySecret: parsed.identity_secret,
+          };
+        }
+      }
+    } catch (error) {
+      // Игнорируем отсутствующие папки и продолжаем поиск в следующих.
+      if (error && error.code === 'ENOENT') {
+        continue;
+      }
+
+      // Для JSON-ошибок и прочего сразу падаем, чтобы не скрывать реальные проблемы.
+      throw error;
     }
   }
 
-  throw new Error(`maFile не найден для аккаунта: ${login}`);
+  throw new Error(
+    `maFile не найден для аккаунта: ${login}. Проверены папки: ${checkedDirs.join(', ') || 'нет доступных'}`
+  );
 }
+
 
 async function setCommunityCookies(community, cookies) {
   await new Promise((resolve, reject) => {
