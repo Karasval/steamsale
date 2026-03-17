@@ -104,16 +104,37 @@ async function getMaFileData(login) {
   );
 }
 
-
 async function setCommunityCookies(community, cookies) {
+  // setCookies в steamcommunity иногда не вызывает callback стабильно,
+  // поэтому используем безопасный вариант с таймаутом.
   await new Promise((resolve, reject) => {
-    community.setCookies(cookies, (err) => {
-      if (err) {
-        reject(err);
-        return;
-      }
+    let done = false;
+
+    const timeout = setTimeout(() => {
+      if (done) return;
+      done = true;
       resolve();
-    });
+    }, 15000);
+
+    try {
+      community.setCookies(cookies, (err) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        resolve();
+      });
+    } catch (error) {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      reject(error);
+    }
   });
 }
 
@@ -133,7 +154,12 @@ async function main() {
       client = authResult.client;
 
       const community = new SteamCommunity();
+      console.log(`🍪 [${account.login}] Устанавливаю cookies в SteamCommunity...`);
       await setCommunityCookies(community, authResult.cookies);
+
+      // Гарантируем steamID для market-модуля, даже если setCookies не успел его проставить.
+      community.steamID = client.steamID;
+      console.log(`🆔 [${account.login}] steamID установлен: ${community.steamID}`);
 
       const result = await sellItem(
         community,
