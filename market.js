@@ -148,6 +148,36 @@ async function createListing(community, sessionID, assetid, appid, contextid, pr
   return createListingViaHttp(community, sessionID, assetid, appid, contextid, priceInCents);
 }
 
+
+function shouldRequireConfirmation(listingResult) {
+  if (!listingResult || typeof listingResult !== 'object') {
+    // Если нет данных — пробуем подтверждение (старое поведение steamcommunity).
+    return true;
+  }
+
+  const flags = [
+    listingResult.needs_mobile_confirmation,
+    listingResult.needs_confirmation,
+    listingResult.requires_confirmation,
+    listingResult.success === 1 ? listingResult.requires_confirmation : undefined,
+  ];
+
+  if (flags.some((v) => v === true || v === 1 || v === '1')) {
+    return true;
+  }
+
+  if (flags.some((v) => v === false || v === 0 || v === '0')) {
+    return false;
+  }
+
+  return true;
+}
+
+function isConfirmationNotFoundError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('could not find confirmation for object');
+}
+
 /**
  * Выставляет предмет на продажу и подтверждает листинг.
  */
@@ -214,23 +244,47 @@ async function sellItem(
     }
 
     console.log(`📤 Выставление предмета (assetid: ${assetid}) за ${priceInCents}`);
-    await createListing(community, effectiveSessionID, assetid, appid, contextid, priceInCents);
+    const listingResult = await createListing(
+      community,
+      effectiveSessionID,
+      assetid,
+      appid,
+      contextid,
+      priceInCents
+    );
 
-    console.log('⏳ Ждем 3 секунды перед подтверждением...');
-    await sleep(3000);
+    const needConfirmation = shouldRequireConfirmation(listingResult);
 
-    console.log('🔐 Подтверждение листинга...');
-    await new Promise((resolve, reject) => {
-      community.acceptConfirmationForObject(identitySecret, assetid, (err) => {
-        if (err) {
-          reject(err);
-          return;
+    if (needConfirmation) {
+      console.log('⏳ Ждем 3 секунды перед подтверждением...');
+      await sleep(3000);
+
+      console.log('🔐 Подтверждение листинга...');
+      try {
+        await new Promise((resolve, reject) => {
+          community.acceptConfirmationForObject(identitySecret, assetid, (err) => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve();
+          });
+        });
+
+        console.log('✅ Продажа успешно подтверждена');
+      } catch (confirmError) {
+        if (isConfirmationNotFoundError(confirmError)) {
+          console.log(
+            '⚠️ Подтверждение не найдено: вероятно лот уже активен без мобильного подтверждения'
+          );
+          console.log('✅ Продажа успешно выставлена');
+        } else {
+          throw confirmError;
         }
-        resolve();
-      });
-    });
-
-    console.log('✅ Продажа успешно подтверждена');
+      }
+    } else {
+      console.log('✅ Лот выставлен (подтверждение не требуется)');
+    }
     return true;
   } catch (error) {
     console.error('❌ Ошибка в sellItem:', error.message || error);
