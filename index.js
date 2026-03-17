@@ -138,6 +138,16 @@ async function setCommunityCookies(community, cookies) {
   });
 }
 
+
+async function authorizeWithTimeout(login, password, sharedSecret, timeoutMs = 120000) {
+  return Promise.race([
+    authorize(login, password, sharedSecret),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`[${login}] Таймаут авторизации`)), timeoutMs);
+    }),
+  ]);
+}
+
 async function main() {
   const { itemName, targetPrice } = await askUserInputs();
   const accounts = await readAccounts();
@@ -149,7 +159,13 @@ async function main() {
       console.log(`\n🚀 Обработка аккаунта: ${account.login}`);
 
       const { sharedSecret, identitySecret } = await getMaFileData(account.login);
-      const authResult = await authorize(account.login, account.password, sharedSecret);
+      console.log(`🔐 [${account.login}] Старт авторизации...`);
+      const authResult = await authorizeWithTimeout(
+        account.login,
+        account.password,
+        sharedSecret
+      );
+      console.log(`✅ [${account.login}] Авторизация завершена, продолжаю к продаже...`);
 
       client = authResult.client;
 

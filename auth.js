@@ -23,44 +23,61 @@ function authorize(login, password, sharedSecret) {
     });
 
     let settled = false;
+    let relogInterval = null;
 
-    const timeout = setTimeout(() => {
-      finishWithError(new Error(`[${login}] Таймаут ожидания webSession`));
-    }, 60000);
-
-    const clearHandlers = () => {
-      clearTimeout(timeout);
+    const cleanup = () => {
+      if (relogInterval) {
+        clearInterval(relogInterval);
+        relogInterval = null;
+      }
       user.removeListener('error', onError);
       user.removeListener('loggedOn', onLoggedOn);
       user.removeListener('webSession', onWebSession);
     };
 
-    const finishWithError = (error) => {
+    const fail = (error) => {
       if (settled) return;
       settled = true;
-      clearHandlers();
+      cleanup();
       reject(error);
     };
 
+    const succeed = (cookies) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      // Выносим resolve в следующий тик, чтобы гарантировать переход дальше по цепочке await.
+      setImmediate(() => resolve({ client: user, cookies }));
+    };
+
+    const loginTimeout = setTimeout(() => {
+      fail(new Error(`[${login}] Таймаут ожидания webSession`));
+    }, 90000);
+
+    const stopTimeout = () => clearTimeout(loginTimeout);
+
     const onError = (error) => {
-      finishWithError(error);
+      stopTimeout();
+      fail(error);
     };
 
     const onLoggedOn = () => {
       console.log(`✅ [${login}] Успешный вход в Steam`);
       console.log(`🌐 [${login}] Запрашиваю webSession...`);
 
-      // В реальных сценариях событие webSession часто не приходит само,
-      // поэтому запрашиваем web-сессию вручную.
       user.webLogOn();
+
+      // Иногда первый webLogOn не срабатывает, повторяем мягко каждые 5 секунд.
+      relogInterval = setInterval(() => {
+        if (settled) return;
+        user.webLogOn();
+      }, 5000);
     };
 
     const onWebSession = (_sessionID, cookies) => {
-      if (settled) return;
-      settled = true;
-      clearHandlers();
+      stopTimeout();
       console.log(`🍪 [${login}] webSession получена`);
-      resolve({ client: user, cookies });
+      succeed(cookies);
     };
 
     user.on('error', onError);
@@ -69,7 +86,8 @@ function authorize(login, password, sharedSecret) {
 
     SteamTotp.getTimeOffset((offsetError, offset) => {
       if (offsetError) {
-        finishWithError(offsetError);
+        stopTimeout();
+        fail(offsetError);
         return;
       }
 
