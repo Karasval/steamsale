@@ -6,6 +6,41 @@ function sleep(ms) {
 }
 
 /**
+ * Унифицированное выставление лота для разных версий steamcommunity.
+ */
+async function createListing(community, assetid, appid, contextid, priceInCents) {
+  if (typeof community.sellItem === 'function') {
+    console.log('ℹ️ Использую community.sellItem(...)');
+    return new Promise((resolve, reject) => {
+      community.sellItem({ assetid, appid, contextid, price: priceInCents }, (err, result) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(result || {});
+      });
+    });
+  }
+
+  if (typeof community.createMarketListing === 'function') {
+    console.log('ℹ️ Использую community.createMarketListing(...)');
+    return new Promise((resolve, reject) => {
+      community.createMarketListing(appid, contextid, assetid, priceInCents, (err, result) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(result || {});
+      });
+    });
+  }
+
+  throw new Error(
+    'Ни sellItem, ни createMarketListing не доступны в текущей версии steamcommunity'
+  );
+}
+
+/**
  * Выставляет предмет на продажу и подтверждает листинг.
  *
  * @param {import('steamcommunity')} community
@@ -69,16 +104,7 @@ async function sellItem(
     }
 
     console.log(`📤 Выставление предмета (assetid: ${assetid}) за ${priceInCents}`);
-
-    await new Promise((resolve, reject) => {
-      community.sellItem({ assetid, appid, contextid, price: priceInCents }, (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve();
-      });
-    });
+    await createListing(community, assetid, appid, contextid, priceInCents);
 
     console.log('⏳ Ждем 3 секунды перед подтверждением...');
     await sleep(3000);
