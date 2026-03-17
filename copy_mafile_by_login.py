@@ -14,24 +14,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Находит .maFile по Steam-логину и копирует его в другую папку.",
     )
-    parser.add_argument(
-        "login",
-        help="Steam логин (например, account_name в maFile)",
-    )
-    parser.add_argument(
-        "source_dir",
-        type=Path,
-        help="Папка, где лежат maFiles",
-    )
-    parser.add_argument(
-        "destination_dir",
-        type=Path,
-        help="Папка, куда нужно скопировать найденный maFile",
-    )
+    parser.add_argument("login", nargs="?", help="Steam логин (например, account_name в maFile)")
+    parser.add_argument("source_dir", nargs="?", type=Path, help="Папка, где лежат maFiles")
+    parser.add_argument("destination_dir", nargs="?", type=Path, help="Папка, куда нужно скопировать найденный maFile")
     parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Перезаписать файл в destination_dir, если он уже существует",
+    )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Открыть GUI для выбора логина, папок и .maFile",
     )
     return parser.parse_args()
 
@@ -82,8 +76,123 @@ def copy_mafile(source_file: Path, destination_dir: Path, overwrite: bool) -> Pa
     return destination_file
 
 
-def main() -> int:
-    args = parse_args()
+def validate_mafile_login(mafile: Path, login: str) -> None:
+    try:
+        data = json.loads(mafile.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise ValueError(f"Файл {mafile} не является корректным .maFile JSON") from None
+
+    file_login = extract_login(data)
+    if not file_login:
+        raise ValueError(f"В файле {mafile} не найден login (account_name или Session.SteamLogin)")
+
+    if file_login.casefold() != login.casefold():
+        raise ValueError(f"Логин в файле '{file_login}' не совпадает с указанным '{login}'")
+
+
+def run_gui() -> int:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        print(f"Ошибка GUI: {exc}. Запустите скрипт в окружении с графическим интерфейсом или используйте CLI режим.", file=sys.stderr)
+        return 2
+    root.title("Steam maFile Copier")
+    root.resizable(False, False)
+
+    login_var = tk.StringVar()
+    source_dir_var = tk.StringVar()
+    destination_dir_var = tk.StringVar()
+    mafile_var = tk.StringVar()
+    overwrite_var = tk.BooleanVar(value=False)
+
+    def choose_source_dir() -> None:
+        directory = filedialog.askdirectory(title="Выберите папку с maFiles")
+        if directory:
+            source_dir_var.set(directory)
+
+    def choose_destination_dir() -> None:
+        directory = filedialog.askdirectory(title="Выберите папку назначения")
+        if directory:
+            destination_dir_var.set(directory)
+
+    def choose_mafile() -> None:
+        filepath = filedialog.askopenfilename(
+            title="Выберите .maFile",
+            filetypes=[("Steam maFile", "*.maFile"), ("All files", "*.*")],
+        )
+        if filepath:
+            mafile_var.set(filepath)
+
+    def execute_copy() -> None:
+        login = login_var.get().strip()
+        destination = destination_dir_var.get().strip()
+        source_dir = source_dir_var.get().strip()
+        mafile = mafile_var.get().strip()
+
+        if not destination:
+            messagebox.showerror("Ошибка", "Выберите папку назначения")
+            return
+
+        if not login and not mafile:
+            messagebox.showerror("Ошибка", "Укажите логин или выберите конкретный .maFile")
+            return
+
+        try:
+            if mafile:
+                source_file = Path(mafile)
+                if not source_file.exists() or not source_file.is_file():
+                    raise FileNotFoundError(f"Файл не найден: {source_file}")
+                if login:
+                    validate_mafile_login(source_file, login)
+            else:
+                if not source_dir:
+                    raise FileNotFoundError("Выберите папку с maFiles")
+                source_file = find_mafile_by_login(login, Path(source_dir))
+
+            copied_to = copy_mafile(source_file, Path(destination), overwrite=overwrite_var.get())
+        except (FileNotFoundError, FileExistsError, ValueError) as exc:
+            messagebox.showerror("Ошибка", str(exc))
+            return
+
+        messagebox.showinfo("Успех", f"Найден файл: {source_file}\nСкопирован в: {copied_to}")
+
+    pad = {"padx": 8, "pady": 4}
+
+    tk.Label(root, text="Steam логин (необязательно, если выбрали файл):").grid(row=0, column=0, sticky="w", **pad)
+    tk.Entry(root, textvariable=login_var, width=45).grid(row=1, column=0, columnspan=2, sticky="we", **pad)
+
+    tk.Label(root, text="Папка с maFiles (для поиска по логину):").grid(row=2, column=0, sticky="w", **pad)
+    tk.Entry(root, textvariable=source_dir_var, width=45).grid(row=3, column=0, sticky="we", **pad)
+    tk.Button(root, text="Выбрать папку", command=choose_source_dir).grid(row=3, column=1, **pad)
+
+    tk.Label(root, text="Или выберите конкретный .maFile:").grid(row=4, column=0, sticky="w", **pad)
+    tk.Entry(root, textvariable=mafile_var, width=45).grid(row=5, column=0, sticky="we", **pad)
+    tk.Button(root, text="Выбрать файл", command=choose_mafile).grid(row=5, column=1, **pad)
+
+    tk.Label(root, text="Папка назначения:").grid(row=6, column=0, sticky="w", **pad)
+    tk.Entry(root, textvariable=destination_dir_var, width=45).grid(row=7, column=0, sticky="we", **pad)
+    tk.Button(root, text="Выбрать папку", command=choose_destination_dir).grid(row=7, column=1, **pad)
+
+    tk.Checkbutton(root, text="Перезаписать, если файл уже существует", variable=overwrite_var).grid(
+        row=8, column=0, columnspan=2, sticky="w", **pad
+    )
+    tk.Button(root, text="Копировать", command=execute_copy, width=20).grid(row=9, column=0, columnspan=2, pady=10)
+
+    root.mainloop()
+    return 0
+
+
+def run_cli(args: argparse.Namespace) -> int:
+    if not args.login or not args.source_dir or not args.destination_dir:
+        print(
+            "Ошибка: для CLI режима нужны аргументы: login source_dir destination_dir\n"
+            "Либо запустите с --gui.",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         mafile = find_mafile_by_login(args.login, args.source_dir)
@@ -95,6 +204,13 @@ def main() -> int:
     print(f"Найден файл: {mafile}")
     print(f"Скопирован в: {copied_to}")
     return 0
+
+
+def main() -> int:
+    args = parse_args()
+    if args.gui or (not args.login and not args.source_dir and not args.destination_dir):
+        return run_gui()
+    return run_cli(args)
 
 
 if __name__ == "__main__":
