@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Открыть GUI для выбора логина, папок и .maFile",
     )
+    parser.add_argument(
+        "--logins-file",
+        type=Path,
+        help="Путь к txt файлу со списком логинов (по одному логину на строку)",
+    )
     return parser.parse_args()
 
 
@@ -76,6 +81,30 @@ def copy_mafile(source_file: Path, destination_dir: Path, overwrite: bool) -> Pa
     return destination_file
 
 
+def read_logins_file(logins_file: Path) -> list[str]:
+    if not logins_file.exists() or not logins_file.is_file():
+        raise FileNotFoundError(f"Файл со списком логинов не найден: {logins_file}")
+
+    logins: list[str] = []
+    for line in logins_file.read_text(encoding="utf-8").splitlines():
+        login = line.strip()
+        if login:
+            logins.append(login)
+
+    if not logins:
+        raise ValueError(f"Файл {logins_file} не содержит логинов")
+
+    return logins
+
+
+def copy_mafiles_for_logins(logins: list[str], source_dir: Path, destination_dir: Path, overwrite: bool) -> list[Path]:
+    copied_files: list[Path] = []
+    for login in logins:
+        mafile = find_mafile_by_login(login, source_dir)
+        copied_files.append(copy_mafile(mafile, destination_dir, overwrite=overwrite))
+    return copied_files
+
+
 def validate_mafile_login(mafile: Path, login: str) -> None:
     try:
         data = json.loads(mafile.read_text(encoding="utf-8"))
@@ -106,6 +135,7 @@ def run_gui() -> int:
     source_dir_var = tk.StringVar()
     destination_dir_var = tk.StringVar()
     mafile_var = tk.StringVar()
+    logins_file_var = tk.StringVar()
     overwrite_var = tk.BooleanVar(value=False)
 
     def choose_source_dir() -> None:
@@ -126,18 +156,27 @@ def run_gui() -> int:
         if filepath:
             mafile_var.set(filepath)
 
+    def choose_logins_file() -> None:
+        filepath = filedialog.askopenfilename(
+            title="Выберите txt файл с логинами",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if filepath:
+            logins_file_var.set(filepath)
+
     def execute_copy() -> None:
         login = login_var.get().strip()
         destination = destination_dir_var.get().strip()
         source_dir = source_dir_var.get().strip()
         mafile = mafile_var.get().strip()
+        logins_file = logins_file_var.get().strip()
 
         if not destination:
             messagebox.showerror("Ошибка", "Выберите папку назначения")
             return
 
-        if not login and not mafile:
-            messagebox.showerror("Ошибка", "Укажите логин или выберите конкретный .maFile")
+        if not login and not mafile and not logins_file:
+            messagebox.showerror("Ошибка", "Укажите логин, выберите .maFile или txt со списком логинов")
             return
 
         try:
@@ -147,17 +186,34 @@ def run_gui() -> int:
                     raise FileNotFoundError(f"Файл не найден: {source_file}")
                 if login:
                     validate_mafile_login(source_file, login)
+                copied_to = copy_mafile(source_file, Path(destination), overwrite=overwrite_var.get())
+                messagebox.showinfo("Успех", f"Найден файл: {source_file}\nСкопирован в: {copied_to}")
+                return
+            if logins_file:
+                if not source_dir:
+                    raise FileNotFoundError("Выберите папку с maFiles")
+                logins = read_logins_file(Path(logins_file))
+                copied_files = copy_mafiles_for_logins(
+                    logins=logins,
+                    source_dir=Path(source_dir),
+                    destination_dir=Path(destination),
+                    overwrite=overwrite_var.get(),
+                )
+                messagebox.showinfo(
+                    "Успех",
+                    f"Скопировано файлов: {len(copied_files)}\nПапка назначения: {destination}",
+                )
+                return
             else:
                 if not source_dir:
                     raise FileNotFoundError("Выберите папку с maFiles")
                 source_file = find_mafile_by_login(login, Path(source_dir))
-
-            copied_to = copy_mafile(source_file, Path(destination), overwrite=overwrite_var.get())
+                copied_to = copy_mafile(source_file, Path(destination), overwrite=overwrite_var.get())
+                messagebox.showinfo("Успех", f"Найден файл: {source_file}\nСкопирован в: {copied_to}")
+                return
         except (FileNotFoundError, FileExistsError, ValueError) as exc:
             messagebox.showerror("Ошибка", str(exc))
             return
-
-        messagebox.showinfo("Успех", f"Найден файл: {source_file}\nСкопирован в: {copied_to}")
 
     pad = {"padx": 8, "pady": 4}
 
@@ -172,24 +228,54 @@ def run_gui() -> int:
     tk.Entry(root, textvariable=mafile_var, width=45).grid(row=5, column=0, sticky="we", **pad)
     tk.Button(root, text="Выбрать файл", command=choose_mafile).grid(row=5, column=1, **pad)
 
-    tk.Label(root, text="Папка назначения:").grid(row=6, column=0, sticky="w", **pad)
-    tk.Entry(root, textvariable=destination_dir_var, width=45).grid(row=7, column=0, sticky="we", **pad)
-    tk.Button(root, text="Выбрать папку", command=choose_destination_dir).grid(row=7, column=1, **pad)
+    tk.Label(root, text="Или выберите txt файл с логинами:").grid(row=6, column=0, sticky="w", **pad)
+    tk.Entry(root, textvariable=logins_file_var, width=45).grid(row=7, column=0, sticky="we", **pad)
+    tk.Button(root, text="Выбрать txt", command=choose_logins_file).grid(row=7, column=1, **pad)
+
+    tk.Label(root, text="Папка назначения:").grid(row=8, column=0, sticky="w", **pad)
+    tk.Entry(root, textvariable=destination_dir_var, width=45).grid(row=9, column=0, sticky="we", **pad)
+    tk.Button(root, text="Выбрать папку", command=choose_destination_dir).grid(row=9, column=1, **pad)
 
     tk.Checkbutton(root, text="Перезаписать, если файл уже существует", variable=overwrite_var).grid(
-        row=8, column=0, columnspan=2, sticky="w", **pad
+        row=10, column=0, columnspan=2, sticky="w", **pad
     )
-    tk.Button(root, text="Копировать", command=execute_copy, width=20).grid(row=9, column=0, columnspan=2, pady=10)
+    tk.Button(root, text="Копировать", command=execute_copy, width=20).grid(row=11, column=0, columnspan=2, pady=10)
 
     root.mainloop()
     return 0
 
 
 def run_cli(args: argparse.Namespace) -> int:
+    if args.logins_file:
+        source_dir = args.source_dir
+        destination_dir = args.destination_dir
+
+        if args.login and args.source_dir and not args.destination_dir:
+            source_dir = Path(args.login)
+            destination_dir = args.source_dir
+
+        if not source_dir or not destination_dir:
+            print(
+                "Ошибка: для --logins-file нужны source_dir и destination_dir.\n"
+                "Пример: script.py --logins-file logins.txt ./mafiles ./out",
+                file=sys.stderr,
+            )
+            return 2
+
+        try:
+            logins = read_logins_file(args.logins_file)
+            copied_files = copy_mafiles_for_logins(logins, source_dir, destination_dir, overwrite=args.overwrite)
+        except (FileNotFoundError, FileExistsError, ValueError) as exc:
+            print(f"Ошибка: {exc}", file=sys.stderr)
+            return 1
+        print(f"Скопировано файлов: {len(copied_files)}")
+        print(f"Папка назначения: {destination_dir}")
+        return 0
+
     if not args.login or not args.source_dir or not args.destination_dir:
         print(
             "Ошибка: для CLI режима нужны аргументы: login source_dir destination_dir\n"
-            "Либо запустите с --gui.",
+            "Либо используйте --logins-file, либо запустите с --gui.",
             file=sys.stderr,
         )
         return 2
@@ -208,7 +294,7 @@ def run_cli(args: argparse.Namespace) -> int:
 
 def main() -> int:
     args = parse_args()
-    if args.gui or (not args.login and not args.source_dir and not args.destination_dir):
+    if args.gui or (not args.login and not args.source_dir and not args.destination_dir and not args.logins_file):
         return run_gui()
     return run_cli(args)
 
