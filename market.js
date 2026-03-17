@@ -52,73 +52,6 @@ function parsePayload(body) {
   }
 }
 
-function isConfirmationNotFoundError(error) {
-  const message = String(error?.message || error || '').toLowerCase();
-  return message.includes('could not find confirmation for object');
-}
-
-function collectConfirmationObjectIDs(assetid, listingResult) {
-  const ids = new Set();
-  ids.add(String(assetid));
-
-  const candidateFields = [
-    listingResult?.listingid,
-    listingResult?.listing_id,
-    listingResult?.sell_listingid,
-    listingResult?.sellid,
-    listingResult?.sell_id,
-    listingResult?.needs_mobile_confirmation_for_sellid,
-  ];
-
-  for (const value of candidateFields) {
-    if (value !== undefined && value !== null && String(value).trim() !== '') {
-      ids.add(String(value));
-    }
-  }
-
-  return [...ids];
-}
-
-async function acceptListingConfirmation(community, identitySecret, objectIDs) {
-  const maxAttempts = 5;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    for (const objectID of objectIDs) {
-      try {
-        await new Promise((resolve, reject) => {
-          community.acceptConfirmationForObject(identitySecret, objectID, (err) => {
-            if (err) {
-              reject(err);
-              return;
-            }
-            resolve();
-          });
-        });
-
-        console.log(`✅ Подтверждение найдено и принято (objectID=${objectID})`);
-        return true;
-      } catch (error) {
-        if (!isConfirmationNotFoundError(error)) {
-          throw error;
-        }
-      }
-    }
-
-    if (attempt < maxAttempts) {
-      console.log(
-        `⏳ Подтверждение пока не появилось (попытка ${attempt}/${maxAttempts}), жду 3 сек...`
-      );
-      await sleep(3000);
-    }
-  }
-
-  // Последний fallback: сканируем список подтверждений и берем свежее market-подтверждение.
-  console.log('⚠️ По objectID подтверждение не найдено, пробую scan fallback...');
-  await acceptMarketConfirmationByScan(community, identitySecret);
-  return true;
-}
-
-
 async function getTimeOffsetSeconds() {
   return new Promise((resolve, reject) => {
     SteamTotp.getTimeOffset((err, offset) => {
@@ -152,44 +85,53 @@ async function loadConfirmations(community, identitySecret) {
 }
 
 async function acceptMarketConfirmationByScan(community, identitySecret) {
-  const confirmations = await loadConfirmations(community, identitySecret);
+  const maxAttempts = 5;
 
-  const marketConfirmations = confirmations.filter((c) => {
-    const type = Number(c?.type);
-    const typeName = String(c?.typeName || c?.type_name || '').toLowerCase();
-    return type === 3 || typeName.includes('market') || typeName.includes('listing');
-  });
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const confirmations = await loadConfirmations(community, identitySecret);
 
-  if (marketConfirmations.length === 0) {
-    throw new Error('В списке подтверждений нет market/listing подтверждений');
-  }
+    const marketConfirmations = confirmations.filter((c) => {
+      const type = Number(c?.type);
+      const typeName = String(c?.typeName || c?.type_name || '').toLowerCase();
+      return type === 3 || typeName.includes('market') || typeName.includes('listing');
+    });
 
-  // Берем самое свежее market-подтверждение
-  const target = marketConfirmations[0];
-  const fallbackIDs = [target?.creator, target?.id].filter(Boolean).map((v) => String(v));
+    if (marketConfirmations.length > 0) {
+      // Берем самое свежее market/listing подтверждение.
+      const target = marketConfirmations[0];
+      const fallbackIDs = [target?.creator, target?.id]
+        .filter(Boolean)
+        .map((v) => String(v));
 
-  for (const objectID of fallbackIDs) {
-    try {
-      await new Promise((resolve, reject) => {
-        community.acceptConfirmationForObject(identitySecret, objectID, (err) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          resolve();
-        });
-      });
+      for (const objectID of fallbackIDs) {
+        try {
+          await new Promise((resolve, reject) => {
+            community.acceptConfirmationForObject(identitySecret, objectID, (err) => {
+              if (err) {
+                reject(err);
+                return;
+              }
+              resolve();
+            });
+          });
 
-      console.log(`✅ Подтверждение принято через scan fallback (objectID=${objectID})`);
-      return true;
-    } catch (_e) {
-      // Пробуем следующий fallback ID
+          console.log(`✅ Подтверждение принято через scan fallback (objectID=${objectID})`);
+          return true;
+        } catch (_e) {
+          // Пробуем следующий objectID.
+        }
+      }
+    }
+
+    if (attempt < maxAttempts) {
+      console.log(
+        `⏳ Market-подтверждение пока не найдено (попытка ${attempt}/${maxAttempts}), жду 3 сек...`
+      );
+      await sleep(3000);
     }
   }
 
-  throw new Error(
-    `Не удалось подтвердить через scan fallback. confirmation.id=${target?.id}, creator=${target?.creator}`
-  );
+  throw new Error('Не удалось подтвердить листинг через scan fallback');
 }
 
 async function createListingViaHttp(community, sessionID, assetid, appid, contextid, priceInCents) {
@@ -253,9 +195,6 @@ async function createListingViaHttp(community, sessionID, assetid, appid, contex
   throw new Error('В текущем steamcommunity нет методов для HTTP-запроса (httpRequest/request.post)');
 }
 
-/**
- * Унифицированное выставление лота для разных версий steamcommunity.
- */
 async function createListing(community, sessionID, assetid, appid, contextid, priceInCents) {
   if (typeof community.sellItem === 'function') {
     console.log('ℹ️ Использую community.sellItem(...)');
@@ -383,18 +322,15 @@ async function sellItem(
       priceInCents
     );
 
-    const needConfirmation = shouldRequireConfirmation(listingResult);
-
-    if (!needConfirmation) {
+    if (!shouldRequireConfirmation(listingResult)) {
       console.log('✅ Лот выставлен (подтверждение не требуется)');
       return true;
     }
 
-    const objectIDs = collectConfirmationObjectIDs(assetid, listingResult);
-    console.log(`🔐 Подтверждение листинга... objectIDs=${objectIDs.join(', ')}`);
-
-    await acceptListingConfirmation(community, identitySecret, objectIDs);
+    console.log('🔐 Подтверждение листинга только через scan fallback...');
+    await acceptMarketConfirmationByScan(community, identitySecret);
     console.log('✅ Продажа успешно подтверждена');
+
     return true;
   } catch (error) {
     console.error('❌ Ошибка в sellItem:', error.message || error);
