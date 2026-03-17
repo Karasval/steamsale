@@ -43,7 +43,7 @@ async function promptAndSellItem(market_hash_name, appid, contextid) {
     console.log(`🔎 Поиск предмета в инвентаре: ${market_hash_name}`);
 
     const inventory = await new Promise((resolve, reject) => {
-      community.getUserInventoryContents(appid, contextid, false, (err, items) => {
+      community.getUserInventoryContents(community.steamID, appid, contextid, true, (err, items) => {
         if (err) {
           reject(err);
           return;
@@ -119,7 +119,7 @@ async function promptAndSellItem(market_hash_name, appid, contextid) {
     console.log(`📤 Выставление предмета на продажу за ${priceInCents} (минимальные единицы)...`);
 
     const sellResult = await new Promise((resolve, reject) => {
-      community.sellItem(assetid, appid, contextid, priceInCents, (err, result) => {
+      community.sellItem({ assetid, appid, contextid, price: priceInCents }, (err, result) => {
         if (err) {
           reject(err);
           return;
@@ -138,15 +138,12 @@ async function promptAndSellItem(market_hash_name, appid, contextid) {
       return;
     }
 
-    const confirmationObjectId =
-      sellResult.listingid || sellResult.listing_id || sellResult.sell_listingid || assetid;
-
-    console.log(`🔐 Подтверждение лота через Steam Guard (objectID: ${confirmationObjectId})...`);
+    console.log(`🔐 Подтверждение лота через Steam Guard (objectID: ${assetid})...`);
 
     await new Promise((resolve, reject) => {
       community.acceptConfirmationForObject(
         identitySecret,
-        confirmationObjectId,
+        assetid,
         (err) => {
           if (err) {
             reject(err);
