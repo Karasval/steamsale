@@ -24,23 +24,48 @@ function authorize(login, password, sharedSecret) {
 
     let settled = false;
 
+    const timeout = setTimeout(() => {
+      finishWithError(new Error(`[${login}] Таймаут ожидания webSession`));
+    }, 60000);
+
+    const clearHandlers = () => {
+      clearTimeout(timeout);
+      user.removeListener('error', onError);
+      user.removeListener('loggedOn', onLoggedOn);
+      user.removeListener('webSession', onWebSession);
+    };
+
     const finishWithError = (error) => {
       if (settled) return;
       settled = true;
+      clearHandlers();
       reject(error);
     };
 
-    user.once('error', finishWithError);
+    const onError = (error) => {
+      finishWithError(error);
+    };
 
-    user.once('loggedOn', () => {
+    const onLoggedOn = () => {
       console.log(`✅ [${login}] Успешный вход в Steam`);
-    });
+      console.log(`🌐 [${login}] Запрашиваю webSession...`);
 
-    user.once('webSession', (_sessionID, cookies) => {
+      // В реальных сценариях событие webSession часто не приходит само,
+      // поэтому запрашиваем web-сессию вручную.
+      user.webLogOn();
+    };
+
+    const onWebSession = (_sessionID, cookies) => {
       if (settled) return;
       settled = true;
+      clearHandlers();
+      console.log(`🍪 [${login}] webSession получена`);
       resolve({ client: user, cookies });
-    });
+    };
+
+    user.on('error', onError);
+    user.on('loggedOn', onLoggedOn);
+    user.on('webSession', onWebSession);
 
     SteamTotp.getTimeOffset((offsetError, offset) => {
       if (offsetError) {
