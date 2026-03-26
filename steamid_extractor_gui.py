@@ -53,6 +53,13 @@ def extract_from_mafiles(folder: Path) -> dict[str, set[str]]:
     return result
 
 
+def write_steam_ids_to_file(folder: Path, steam_ids: set[str]) -> Path:
+    """Write unique Steam IDs to a txt file in selected folder."""
+    output_path = folder / "steam_ids.txt"
+    output_path.write_text("\n".join(sorted(steam_ids)) + "\n", encoding="utf-8")
+    return output_path
+
+
 class SteamIdExtractorApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -121,8 +128,11 @@ class SteamIdExtractorApp:
             lines.append(f"{filename}: {ids_text}")
             all_ids.update(ids)
 
+        output_file = write_steam_ids_to_file(folder, all_ids)
+
         lines.append("\nУникальные SteamID:")
         lines.extend(sorted(all_ids))
+        lines.append(f"\nSteamID сохранены в файл: {output_file}")
 
         self.output.insert(tk.END, "\n".join(lines) + "\n")
 
