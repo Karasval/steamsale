@@ -53,9 +53,9 @@ def extract_from_mafiles(folder: Path) -> dict[str, set[str]]:
     return result
 
 
-def write_steam_ids_to_file(folder: Path, steam_ids: set[str]) -> Path:
-    """Write unique Steam IDs to a txt file in selected folder."""
-    output_path = folder / "steam_ids.txt"
+def write_steam_ids_to_file(output_path: Path, steam_ids: set[str]) -> Path:
+    """Write unique Steam IDs to provided txt file path."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(sorted(steam_ids)) + "\n", encoding="utf-8")
     return output_path
 
@@ -67,6 +67,7 @@ class SteamIdExtractorApp:
         self.root.geometry("760x460")
 
         self.folder_var = tk.StringVar()
+        self.output_file_var = tk.StringVar()
 
         container = ttk.Frame(root, padding=12)
         container.pack(fill="both", expand=True)
@@ -93,6 +94,26 @@ class SteamIdExtractorApp:
             command=self.process_folder,
         ).pack(side="left", padx=(8, 0))
 
+        file_controls = ttk.Frame(container)
+        file_controls.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(
+            file_controls,
+            text="Файл для сохранения SteamID (.txt):",
+        ).pack(anchor="w")
+
+        ttk.Entry(file_controls, textvariable=self.output_file_var).pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(0, 8),
+        )
+        ttk.Button(
+            file_controls,
+            text="Выбрать txt",
+            command=self.pick_output_file,
+        ).pack(side="left")
+
         self.output = tk.Text(container, wrap="word", height=20)
         self.output.pack(fill="both", expand=True)
 
@@ -100,6 +121,18 @@ class SteamIdExtractorApp:
         chosen = filedialog.askdirectory(title="Выберите папку с maFiles")
         if chosen:
             self.folder_var.set(chosen)
+            if not self.output_file_var.get().strip():
+                self.output_file_var.set(str(Path(chosen) / "steam_ids.txt"))
+
+    def pick_output_file(self) -> None:
+        chosen = filedialog.asksaveasfilename(
+            title="Выберите txt файл для SteamID",
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile="steam_ids.txt",
+        )
+        if chosen:
+            self.output_file_var.set(chosen)
 
     def process_folder(self) -> None:
         self.output.delete("1.0", tk.END)
@@ -112,6 +145,9 @@ class SteamIdExtractorApp:
         if not folder.exists() or not folder.is_dir():
             messagebox.showerror("Ошибка", "Указанная папка не существует.")
             return
+
+        output_text = self.output_file_var.get().strip()
+        output_file = Path(output_text) if output_text else folder / "steam_ids.txt"
 
         extracted = extract_from_mafiles(folder)
         if not extracted:
@@ -128,7 +164,7 @@ class SteamIdExtractorApp:
             lines.append(f"{filename}: {ids_text}")
             all_ids.update(ids)
 
-        output_file = write_steam_ids_to_file(folder, all_ids)
+        write_steam_ids_to_file(output_file, all_ids)
 
         lines.append("\nУникальные SteamID:")
         lines.extend(sorted(all_ids))
