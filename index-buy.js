@@ -6,6 +6,8 @@ const SteamCommunity = require('steamcommunity');
 const { authorize } = require('./auth');
 const { placeBuyOrderOnFullBalance } = require('./buyOrder');
 
+const TF2_APP_ID = 440;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -138,7 +140,7 @@ async function main() {
     let client;
 
     try {
-      console.log(`\n🚀 [BUY] Обработка аккаунта: ${account.login}`);
+      console.log(`\n🚀 [BUY] Обработка аккаунта: ${account.login} (TF2 appid=${TF2_APP_ID})`);
 
       const { sharedSecret } = await getMaFileData(account.login);
       const authResult = await authorizeWithTimeout(account.login, account.password, sharedSecret);
@@ -152,7 +154,7 @@ async function main() {
 
       const result = await placeBuyOrderOnFullBalance(
         community,
-        730,
+        TF2_APP_ID,
         marketHashName,
         targetPrice
       );
