@@ -551,10 +551,27 @@ async function placeBuyOrderOnFullBalance(
     }
 
     const orderVisible = await verifyBuyOrderExists(community, appId, marketHashName);
-    const finalSuccess = needConfirmation ? Boolean(confirmation?.confirmed) : true;
-    const visibilityWarning = !orderVisible
-      ? ' (проверка my listings не нашла ордер сразу, это может быть задержка Steam)'
-      : '';
+
+    // Дополнительная валидация: если ордер не виден, проверяем что баланс реально изменился.
+    let afterBalanceMinor = null;
+    let walletChanged = false;
+    try {
+      await sleep(2000);
+      const walletAfter = await getWalletInfoSafe(community);
+      afterBalanceMinor = Number(walletAfter?.balanceMinor ?? 0);
+      walletChanged = Number.isFinite(afterBalanceMinor) && afterBalanceMinor < balanceMinor;
+    } catch {
+      // не валим основной сценарий из-за проблем чтения кошелька
+    }
+
+    const finalSuccess = needConfirmation
+      ? Boolean(confirmation?.confirmed) && (orderVisible || walletChanged)
+      : orderVisible || walletChanged;
+    const visibilityWarning = !orderVisible && !walletChanged
+      ? ' (ордер не найден в my listings и баланс не изменился)'
+      : !orderVisible
+        ? ' (ордер не найден в my listings, но баланс изменился)'
+        : '';
 
     return {
       success: Boolean(finalSuccess),
@@ -568,6 +585,8 @@ async function placeBuyOrderOnFullBalance(
         : `Buy order успешно создан${visibilityWarning}`,
       confirmation,
       orderVisible,
+      walletChanged,
+      afterBalance: afterBalanceMinor !== null ? afterBalanceMinor / 100 : null,
       response: responsePayload,
     };
   } catch (error) {
