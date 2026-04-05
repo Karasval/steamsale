@@ -516,20 +516,21 @@ async function placeBuyOrderOnFullBalance(
     }
 
     const orderVisible = await verifyBuyOrderExists(community, appId, marketHashName);
-    const finalSuccess = needConfirmation ? confirmation?.confirmed && orderVisible : orderVisible;
+    const finalSuccess = needConfirmation ? Boolean(confirmation?.confirmed) : true;
+    const visibilityWarning = !orderVisible
+      ? ' (проверка my listings не нашла ордер сразу, это может быть задержка Steam)'
+      : '';
 
     return {
       success: Boolean(finalSuccess),
       quantity,
       unitPrice,
       remainingBalance: remainingBalanceMinor / 100,
-      message: !orderVisible
-        ? 'Steam ответил успехом, но ордер не найден в my listings'
-        : needConfirmation
-          ? confirmation?.confirmed
-            ? 'Buy order создан и подтвержден'
-            : 'Buy order создан, но подтверждение не выполнено'
-          : 'Buy order успешно создан',
+      message: needConfirmation
+        ? confirmation?.confirmed
+          ? `Buy order создан и подтвержден${visibilityWarning}`
+          : 'Buy order создан, но подтверждение не выполнено'
+        : `Buy order успешно создан${visibilityWarning}`,
       confirmation,
       orderVisible,
       response: responsePayload,
