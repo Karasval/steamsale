@@ -10,6 +10,69 @@ function extractSessionIDFromCookies(cookies) {
   return raw.split(';')[0].slice('sessionid='.length);
 }
 
+const CURRENCY_CODE_TO_ID = {
+  USD: 1,
+  GBP: 2,
+  EUR: 3,
+  CHF: 4,
+  RUB: 5,
+  PLN: 6,
+  BRL: 7,
+  JPY: 8,
+  NOK: 9,
+  IDR: 10,
+  MYR: 11,
+  PHP: 12,
+  SGD: 13,
+  THB: 14,
+  VND: 15,
+  KRW: 16,
+  TRY: 17,
+  UAH: 18,
+  MXN: 19,
+  CAD: 20,
+  AUD: 21,
+  NZD: 22,
+  CNY: 23,
+  INR: 24,
+  CLP: 25,
+  PEN: 26,
+  COP: 27,
+  ZAR: 28,
+  HKD: 29,
+  TWD: 30,
+  SAR: 31,
+  AED: 32,
+  SEK: 33,
+  ARS: 34,
+  ILS: 35,
+  BYN: 36,
+  KZT: 37,
+  KWD: 38,
+  QAR: 39,
+  CRC: 40,
+  UYU: 41,
+  BGN: 42,
+  HRK: 43,
+  CZK: 44,
+  DKK: 45,
+  HUF: 46,
+  RON: 47,
+};
+
+function normalizeCurrencyToId(currencyRaw) {
+  if (currencyRaw === null || currencyRaw === undefined) return null;
+  if (typeof currencyRaw === 'number' && Number.isFinite(currencyRaw)) {
+    return Math.trunc(currencyRaw);
+  }
+  const asNumber = Number(currencyRaw);
+  if (Number.isFinite(asNumber)) {
+    return Math.trunc(asNumber);
+  }
+  const code = String(currencyRaw).trim().toUpperCase();
+  return CURRENCY_CODE_TO_ID[code] ?? null;
+}
+
 /**
  * Нормализует данные кошелька к виду в минимальных единицах и коде валюты.
  */
@@ -117,9 +180,10 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
     }
 
     const { balanceMinor, currency } = await getWalletInfoSafe(community);
+    const currencyId = normalizeCurrencyToId(currency);
 
-    if (!currency && currency !== 0) {
-      throw new Error('Не удалось определить currency кошелька');
+    if (!currencyId && currencyId !== 0) {
+      throw new Error(`Не удалось определить currency кошелька (получено: ${currency})`);
     }
 
     const unitPriceMinor = Math.round(unitPrice * 100);
@@ -150,12 +214,51 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
       throw new Error('Не удалось определить sessionid для createbuyorder');
     }
 
+    const listingUrl = `https://steamcommunity.com/market/listings/${encodeURIComponent(
+      String(appId)
+    )}/${encodeURIComponent(String(marketHashName))}`;
+
+    // Прогреваем market/listings страницу, чтобы Steam выставил нужные session cookies.
+    await new Promise((resolve, reject) => {
+      const warmupOptions = {
+        method: 'GET',
+        uri: listingUrl,
+        gzip: true,
+      };
+
+      const cb = (err, response) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        if ((response?.statusCode || 0) >= 400) {
+          reject(new Error(`Warmup listing page failed: HTTP ${response.statusCode}`));
+          return;
+        }
+
+        resolve();
+      };
+
+      if (typeof community.httpRequest === 'function') {
+        community.httpRequest(warmupOptions, cb);
+        return;
+      }
+
+      if (community.request && typeof community.request.get === 'function') {
+        community.request.get(warmupOptions, cb);
+        return;
+      }
+
+      reject(new Error('Нет метода для GET listing page (httpRequest/request.get)'));
+    });
+
     const requestOptions = {
       method: 'POST',
       uri: 'https://steamcommunity.com/market/createbuyorder/',
       form: {
         sessionid: String(sessionID),
-        currency: String(currency),
+        currency: String(currencyId),
         appid: String(appId),
         market_hash_name: String(marketHashName),
         price_total: String(priceTotal),
@@ -163,7 +266,8 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
       },
       headers: {
         Origin: 'https://steamcommunity.com',
-        Referer: 'https://steamcommunity.com/market/',
+        Referer: listingUrl,
+        Accept: '*/*',
         'X-Requested-With': 'XMLHttpRequest',
       },
       gzip: true,
@@ -192,6 +296,16 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
         }
 
         if (statusCode >= 400) {
+          if (statusCode === 406) {
+            reject(
+              new Error(
+                `HTTP 406: Steam отклонил запрос. Проверьте валидность session/cookies, currency=${currencyId}, item=${marketHashName}, response=${JSON.stringify(
+                  payload
+                )}`
+              )
+            );
+            return;
+          }
           reject(new Error(`HTTP ${statusCode}: ${JSON.stringify(payload)}`));
           return;
         }
