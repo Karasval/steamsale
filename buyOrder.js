@@ -1,3 +1,5 @@
+const SteamTotp = require('steam-totp');
+
 /**
  * Извлекает sessionid из массива cookies steamcommunity.
  */
@@ -71,6 +73,92 @@ function normalizeCurrencyToId(currencyRaw) {
   }
   const code = String(currencyRaw).trim().toUpperCase();
   return CURRENCY_CODE_TO_ID[code] ?? null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getTimeOffsetAsync() {
+  return new Promise((resolve, reject) => {
+    SteamTotp.getTimeOffset((error, offset) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(offset || 0);
+    });
+  });
+}
+
+async function getConfirmationsSafe(community, identitySecret) {
+  const offset = await getTimeOffsetAsync();
+  const time = Math.floor(Date.now() / 1000) + offset;
+  const key = SteamTotp.getConfirmationKey(identitySecret, time, 'conf');
+
+  return new Promise((resolve, reject) => {
+    community.getConfirmations(time, key, (error, confirmations) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(Array.isArray(confirmations) ? confirmations : []);
+    });
+  });
+}
+
+async function acceptByObjectIdSafe(community, identitySecret, objectId) {
+  return new Promise((resolve, reject) => {
+    community.acceptConfirmationForObject(identitySecret, String(objectId), (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(true);
+    });
+  });
+}
+
+async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayload) {
+  if (!identitySecret) {
+    return { confirmed: false, message: 'Нужен identity_secret для подтверждения buy order' };
+  }
+
+  const confirmationId = responsePayload?.confirmation?.confirmation_id;
+  if (confirmationId) {
+    try {
+      await acceptByObjectIdSafe(community, identitySecret, confirmationId);
+      return { confirmed: true, message: 'Buy order подтвержден через confirmation_id' };
+    } catch {
+      // fallback ниже через scan
+    }
+  }
+
+  for (let i = 0; i < 5; i += 1) {
+    const confirmations = await getConfirmationsSafe(community, identitySecret);
+    const marketConfirmation = confirmations.find((c) => {
+      const type = String(c?.type || '').toLowerCase();
+      const typeName = String(c?.typeName || '').toLowerCase();
+      const headline = String(c?.headline || '').toLowerCase();
+      return (
+        type.includes('market') ||
+        typeName.includes('market') ||
+        headline.includes('buy order') ||
+        headline.includes('purchase')
+      );
+    });
+
+    if (marketConfirmation?.id) {
+      await acceptByObjectIdSafe(community, identitySecret, marketConfirmation.id);
+      return { confirmed: true, message: 'Buy order подтвержден через scan fallback' };
+    }
+
+    if (i < 4) {
+      await sleep(3000);
+    }
+  }
+
+  return { confirmed: false, message: 'Не удалось найти подтверждение buy order' };
 }
 
 /**
@@ -162,9 +250,16 @@ async function getWalletInfoSafe(community) {
  * @param {number|string} appId
  * @param {string} marketHashName
  * @param {number|string} targetPrice - цена за 1 шт в основных единицах (например, 12.34)
- * @returns {Promise<{success: boolean, quantity: number, unitPrice: number, remainingBalance: number, message?: string, error?: string}>}
+ * @param {string} [identitySecret]
+ * @returns {Promise<{success: boolean, quantity: number, unitPrice: number, remainingBalance: number, message?: string, error?: string, confirmation?: object}>}
  */
-async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targetPrice) {
+async function placeBuyOrderOnFullBalance(
+  community,
+  appId,
+  marketHashName,
+  targetPrice,
+  identitySecret
+) {
   try {
     if (!community) {
       throw new Error('Не передан community');
@@ -299,7 +394,13 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
           return;
         }
 
-        if (statusCode >= 400) {
+        const steamSuccessCode = Number(payload?.success);
+        const steamSuccess =
+          payload?.success === true ||
+          steamSuccessCode === 1 ||
+          steamSuccessCode === 22;
+
+        if (statusCode >= 400 && !steamSuccess) {
           if (statusCode === 406) {
             reject(
               new Error(
@@ -314,7 +415,7 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
           return;
         }
 
-        if (payload?.success !== true && payload?.success !== 1) {
+        if (!steamSuccess) {
           reject(new Error(`Steam API error: ${JSON.stringify(payload)}`));
           return;
         }
@@ -335,12 +436,26 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
       reject(new Error('Нет метода для POST /market/createbuyorder/ (httpRequest/request.post)'));
     });
 
+    const needConfirmation =
+      Number(responsePayload?.success) === 22 ||
+      responsePayload?.need_confirmation === true;
+
+    let confirmation = null;
+    if (needConfirmation) {
+      confirmation = await confirmBuyOrderIfNeeded(community, identitySecret, responsePayload);
+    }
+
     return {
       success: true,
       quantity,
       unitPrice,
       remainingBalance: remainingBalanceMinor / 100,
-      message: 'Buy order успешно создан',
+      message: needConfirmation
+        ? confirmation?.confirmed
+          ? 'Buy order создан и подтвержден'
+          : 'Buy order создан, но подтверждение не выполнено'
+        : 'Buy order успешно создан',
+      confirmation,
       response: responsePayload,
     };
   } catch (error) {

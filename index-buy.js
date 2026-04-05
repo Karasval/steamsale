@@ -77,9 +77,13 @@ async function getMaFileData(login) {
           if (!parsed.shared_secret) {
             throw new Error(`В maFile ${fileName} отсутствует shared_secret`);
           }
+          if (!parsed.identity_secret) {
+            throw new Error(`В maFile ${fileName} отсутствует identity_secret`);
+          }
 
           return {
             sharedSecret: parsed.shared_secret,
+            identitySecret: parsed.identity_secret,
           };
         }
       }
@@ -142,7 +146,7 @@ async function main() {
     try {
       console.log(`\n🚀 [BUY] Обработка аккаунта: ${account.login} (TF2 appid=${TF2_APP_ID})`);
 
-      const { sharedSecret } = await getMaFileData(account.login);
+      const { sharedSecret, identitySecret } = await getMaFileData(account.login);
       const authResult = await authorizeWithTimeout(account.login, account.password, sharedSecret);
 
       client = authResult.client;
@@ -156,7 +160,8 @@ async function main() {
         community,
         TF2_APP_ID,
         marketHashName,
-        targetPrice
+        targetPrice,
+        identitySecret
       );
 
       if (result.success) {
