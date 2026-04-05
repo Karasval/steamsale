@@ -166,8 +166,9 @@ async function main() {
 
       if (result.success) {
         console.log(
-          `✅ [BUY:${account.login}] quantity=${result.quantity}, unitPrice=${result.unitPrice}, remaining=${result.remainingBalance}`
+          `✅ [BUY:${account.login}] quantity=${result.quantity}, unitPrice=${result.unitPrice}, remaining=${result.remainingBalance}, orderVisible=${result.orderVisible}, message=${result.message || 'ok'}`
         );
+        console.log(`🧾 [BUY:${account.login}] Детали: ${JSON.stringify(result)}`);
       } else {
         console.log(`⚠️ [BUY:${account.login}] ${result.message || result.error || 'Неуспешно'}`);
         console.log(`🧾 [BUY:${account.login}] Детали: ${JSON.stringify(result)}`);
