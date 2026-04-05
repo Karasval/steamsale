@@ -119,6 +119,51 @@ async function acceptByObjectIdSafe(community, identitySecret, objectId) {
   });
 }
 
+async function acceptConfirmationEntrySafe(community, identitySecret, confirmation) {
+  if (!confirmation) {
+    throw new Error('Пустой confirmation entry');
+  }
+
+  if (typeof confirmation.accept === 'function') {
+    return new Promise((resolve, reject) => {
+      confirmation.accept((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(true);
+      });
+    });
+  }
+
+  if (typeof confirmation.respond === 'function') {
+    return new Promise((resolve, reject) => {
+      confirmation.respond(true, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(true);
+      });
+    });
+  }
+
+  const candidateObjectIds = [confirmation.creator, confirmation.id]
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+
+  for (const objectId of candidateObjectIds) {
+    try {
+      await acceptByObjectIdSafe(community, identitySecret, objectId);
+      return true;
+    } catch {
+      // пробуем следующий candidate
+    }
+  }
+
+  throw new Error('Не удалось подтвердить confirmation entry');
+}
+
 async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayload) {
   if (!identitySecret) {
     return { confirmed: false, message: 'Нужен identity_secret для подтверждения buy order' };
@@ -130,11 +175,18 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
   // Прямой путь: пытаемся подтвердить по confirmation_id из ответа createbuyorder.
   if (targetConfirmationId) {
     try {
-      await acceptByObjectIdSafe(community, identitySecret, targetConfirmationId);
+      const directConfirmations = await getConfirmationsSafe(community, identitySecret);
+      const targetEntry = directConfirmations.find((c) => String(c?.id || '') === targetConfirmationId);
+      if (!targetEntry) {
+        directError = 'confirmation_id не найден в active confirmations';
+      } else {
+        await acceptConfirmationEntrySafe(community, identitySecret, targetEntry);
+      }
+
       await sleep(1500);
       const afterDirect = await getConfirmationsSafe(community, identitySecret);
       const stillExists = afterDirect.some((c) => String(c?.id || '') === targetConfirmationId);
-      if (!stillExists) {
+      if (!stillExists && targetEntry) {
         return { confirmed: true, message: 'Buy order подтвержден через direct confirmation_id path' };
       }
       directError = 'confirmation_id остался активным после direct path';
@@ -165,25 +217,19 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
     });
 
     if (marketConfirmation) {
-      const candidateObjectIds = [marketConfirmation.creator, marketConfirmation.id]
-        .map((v) => String(v || '').trim())
-        .filter(Boolean);
-
-      for (const objectId of candidateObjectIds) {
-        try {
-          await acceptByObjectIdSafe(community, identitySecret, objectId);
-          if (targetConfirmationId) {
-            await sleep(1000);
-            const afterScan = await getConfirmationsSafe(community, identitySecret);
-            const stillExists = afterScan.some((c) => String(c?.id || '') === targetConfirmationId);
-            if (stillExists) {
-              continue;
-            }
+      try {
+        await acceptConfirmationEntrySafe(community, identitySecret, marketConfirmation);
+        if (targetConfirmationId) {
+          await sleep(1000);
+          const afterScan = await getConfirmationsSafe(community, identitySecret);
+          const stillExists = afterScan.some((c) => String(c?.id || '') === targetConfirmationId);
+          if (stillExists) {
+            continue;
           }
-          return { confirmed: true, message: 'Buy order подтвержден через scan fallback' };
-        } catch {
-          // пробуем следующий candidate
         }
+        return { confirmed: true, message: 'Buy order подтвержден через scan fallback' };
+      } catch {
+        // пробуем следующую попытку scan
       }
     }
 
