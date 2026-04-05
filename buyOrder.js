@@ -161,6 +161,86 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
   return { confirmed: false, message: 'Не удалось найти подтверждение buy order' };
 }
 
+async function fetchMyBuyOrdersSnapshot(community) {
+  const options = {
+    method: 'GET',
+    uri: 'https://steamcommunity.com/market/mylistings/render/?query=&start=0&count=100',
+    gzip: true,
+    json: true,
+  };
+
+  return new Promise((resolve, reject) => {
+    const cb = (error, response, body) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      const statusCode = response?.statusCode || 0;
+      if (statusCode >= 400) {
+        reject(new Error(`mylistings render failed: HTTP ${statusCode}`));
+        return;
+      }
+
+      let payload = body;
+      if (typeof payload === 'string') {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          payload = {};
+        }
+      }
+      resolve(payload || {});
+    };
+
+    if (community.request && typeof community.request.get === 'function') {
+      community.request.get(options, cb);
+      return;
+    }
+
+    if (typeof community.httpRequest === 'function') {
+      community.httpRequest(options, cb);
+      return;
+    }
+
+    reject(new Error('Нет метода для GET /market/mylistings/render/'));
+  });
+}
+
+function hasTargetBuyOrder(snapshot, appId, marketHashName) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+
+  const buyOrders = snapshot.buy_orders || snapshot.buyOrders || snapshot.rgBuyOrders || {};
+  const entries = Array.isArray(buyOrders) ? buyOrders : Object.values(buyOrders);
+
+  return entries.some((order) => {
+    const text = JSON.stringify(order || {}).toLowerCase();
+    return (
+      text.includes(String(appId).toLowerCase()) &&
+      text.includes(String(marketHashName).toLowerCase())
+    );
+  });
+}
+
+async function verifyBuyOrderExists(community, appId, marketHashName) {
+  for (let i = 0; i < 5; i += 1) {
+    try {
+      const snapshot = await fetchMyBuyOrdersSnapshot(community);
+      if (hasTargetBuyOrder(snapshot, appId, marketHashName)) {
+        return true;
+      }
+    } catch {
+      // игнорируем и повторяем
+    }
+
+    if (i < 4) {
+      await sleep(2500);
+    }
+  }
+
+  return false;
+}
+
 /**
  * Нормализует данные кошелька к виду в минимальных единицах и коде валюты.
  */
@@ -445,17 +525,23 @@ async function placeBuyOrderOnFullBalance(
       confirmation = await confirmBuyOrderIfNeeded(community, identitySecret, responsePayload);
     }
 
+    const orderVisible = await verifyBuyOrderExists(community, appId, marketHashName);
+    const finalSuccess = needConfirmation ? confirmation?.confirmed && orderVisible : orderVisible;
+
     return {
-      success: true,
+      success: Boolean(finalSuccess),
       quantity,
       unitPrice,
       remainingBalance: remainingBalanceMinor / 100,
-      message: needConfirmation
-        ? confirmation?.confirmed
-          ? 'Buy order создан и подтвержден'
-          : 'Buy order создан, но подтверждение не выполнено'
-        : 'Buy order успешно создан',
+      message: !orderVisible
+        ? 'Steam ответил успехом, но ордер не найден в my listings'
+        : needConfirmation
+          ? confirmation?.confirmed
+            ? 'Buy order создан и подтвержден'
+            : 'Buy order создан, но подтверждение не выполнено'
+          : 'Buy order успешно создан',
       confirmation,
+      orderVisible,
       response: responsePayload,
     };
   } catch (error) {
