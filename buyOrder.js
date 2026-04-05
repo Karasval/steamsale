@@ -124,16 +124,6 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
     return { confirmed: false, message: 'Нужен identity_secret для подтверждения buy order' };
   }
 
-  const confirmationId = responsePayload?.confirmation?.confirmation_id;
-  if (confirmationId) {
-    try {
-      await acceptByObjectIdSafe(community, identitySecret, confirmationId);
-      return { confirmed: true, message: 'Buy order подтвержден через confirmation_id' };
-    } catch {
-      // fallback ниже через scan
-    }
-  }
-
   for (let i = 0; i < 5; i += 1) {
     const confirmations = await getConfirmationsSafe(community, identitySecret);
     const marketConfirmation = confirmations.find((c) => {
