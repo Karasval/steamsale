@@ -79,6 +79,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`Timeout: ${label}`)), ms);
+    promise
+      .then((v) => {
+        clearTimeout(t);
+        resolve(v);
+      })
+      .catch((e) => {
+        clearTimeout(t);
+        reject(e);
+      });
+  });
+}
+
 function getTimeOffsetAsync() {
   return new Promise((resolve, reject) => {
     SteamTotp.getTimeOffset((error, offset) => {
@@ -96,7 +111,8 @@ async function getConfirmationsSafe(community, identitySecret) {
   const time = Math.floor(Date.now() / 1000) + offset;
   const key = SteamTotp.getConfirmationKey(identitySecret, time, 'conf');
 
-  return new Promise((resolve, reject) => {
+  return withTimeout(
+    new Promise((resolve, reject) => {
     community.getConfirmations(time, key, (error, confirmations) => {
       if (error) {
         reject(error);
@@ -104,11 +120,15 @@ async function getConfirmationsSafe(community, identitySecret) {
       }
       resolve(Array.isArray(confirmations) ? confirmations : []);
     });
-  });
+    }),
+    20000,
+    'community.getConfirmations'
+  );
 }
 
 async function acceptByObjectIdSafe(community, identitySecret, objectId) {
-  return new Promise((resolve, reject) => {
+  return withTimeout(
+    new Promise((resolve, reject) => {
     community.acceptConfirmationForObject(identitySecret, String(objectId), (error) => {
       if (error) {
         reject(error);
@@ -116,7 +136,10 @@ async function acceptByObjectIdSafe(community, identitySecret, objectId) {
       }
       resolve(true);
     });
-  });
+    }),
+    20000,
+    'community.acceptConfirmationForObject'
+  );
 }
 
 async function acceptConfirmationEntrySafe(community, identitySecret, confirmation) {
@@ -125,27 +148,35 @@ async function acceptConfirmationEntrySafe(community, identitySecret, confirmati
   }
 
   if (typeof confirmation.accept === 'function') {
-    return new Promise((resolve, reject) => {
-      confirmation.accept((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(true);
-      });
-    });
+    return withTimeout(
+      new Promise((resolve, reject) => {
+        confirmation.accept((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(true);
+        });
+      }),
+      20000,
+      'confirmation.accept'
+    );
   }
 
   if (typeof confirmation.respond === 'function') {
-    return new Promise((resolve, reject) => {
-      confirmation.respond(true, (error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(true);
-      });
-    });
+    return withTimeout(
+      new Promise((resolve, reject) => {
+        confirmation.respond(true, (error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(true);
+        });
+      }),
+      20000,
+      'confirmation.respond'
+    );
   }
 
   const candidateObjectIds = [confirmation.creator, confirmation.id]
@@ -607,7 +638,9 @@ async function placeBuyOrderOnFullBalance(
 
     let confirmation = null;
     if (needConfirmation) {
+      console.log('🔐 [BUY] Требуется подтверждение buy order, запускаю confirm-flow...');
       confirmation = await confirmBuyOrderIfNeeded(community, identitySecret, responsePayload);
+      console.log(`🔐 [BUY] Результат подтверждения: ${confirmation?.message || 'n/a'}`);
     }
 
     const orderVisible = await verifyBuyOrderExists(community, appId, marketHashName);

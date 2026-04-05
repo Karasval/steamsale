@@ -156,6 +156,7 @@ async function main() {
       community.steamID = client.steamID;
       community.sessionID = authResult.sessionID;
 
+      console.log(`🛒 [BUY:${account.login}] Создаю buy order...`);
       const result = await placeBuyOrderOnFullBalance(
         community,
         TF2_APP_ID,
@@ -163,6 +164,7 @@ async function main() {
         targetPrice,
         identitySecret
       );
+      console.log(`📦 [BUY:${account.login}] placeBuyOrderOnFullBalance завершен`);
 
       if (result.success) {
         console.log(
