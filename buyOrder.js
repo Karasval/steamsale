@@ -142,6 +142,26 @@ async function acceptByObjectIdSafe(community, identitySecret, objectId) {
   );
 }
 
+async function acceptAllConfirmationsSafe(community, identitySecret) {
+  if (typeof community.acceptAllConfirmations !== 'function') {
+    throw new Error('community.acceptAllConfirmations недоступен');
+  }
+
+  return withTimeout(
+    new Promise((resolve, reject) => {
+      community.acceptAllConfirmations(identitySecret, (error, confs) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(confs);
+      });
+    }),
+    25000,
+    'community.acceptAllConfirmations'
+  );
+}
+
 async function acceptConfirmationEntrySafe(community, identitySecret, confirmation) {
   if (!confirmation) {
     throw new Error('Пустой confirmation entry');
@@ -223,6 +243,20 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
       directError = 'confirmation_id остался активным после direct path';
     } catch (error) {
       directError = error?.message || String(error);
+    }
+
+    // Дополнительный прямой fallback: принять все подтверждения и проверить исчезновение target.
+    try {
+      await acceptAllConfirmationsSafe(community, identitySecret);
+      await sleep(1500);
+      const afterAll = await getConfirmationsSafe(community, identitySecret);
+      const stillExists = afterAll.some((c) => String(c?.id || '') === targetConfirmationId);
+      if (!stillExists) {
+        return { confirmed: true, message: 'Buy order подтвержден через acceptAllConfirmations fallback' };
+      }
+      directError = 'confirmation_id остался активным после acceptAllConfirmations';
+    } catch (error) {
+      directError = `${directError || 'direct path failed'}; acceptAll error: ${error?.message || String(error)}`;
     }
   }
 
