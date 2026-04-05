@@ -131,7 +131,13 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
   if (targetConfirmationId) {
     try {
       await acceptByObjectIdSafe(community, identitySecret, targetConfirmationId);
-      return { confirmed: true, message: 'Buy order подтвержден через direct confirmation_id path' };
+      await sleep(1500);
+      const afterDirect = await getConfirmationsSafe(community, identitySecret);
+      const stillExists = afterDirect.some((c) => String(c?.id || '') === targetConfirmationId);
+      if (!stillExists) {
+        return { confirmed: true, message: 'Buy order подтвержден через direct confirmation_id path' };
+      }
+      directError = 'confirmation_id остался активным после direct path';
     } catch (error) {
       directError = error?.message || String(error);
     }
@@ -166,6 +172,14 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
       for (const objectId of candidateObjectIds) {
         try {
           await acceptByObjectIdSafe(community, identitySecret, objectId);
+          if (targetConfirmationId) {
+            await sleep(1000);
+            const afterScan = await getConfirmationsSafe(community, identitySecret);
+            const stillExists = afterScan.some((c) => String(c?.id || '') === targetConfirmationId);
+            if (stillExists) {
+              continue;
+            }
+          }
           return { confirmed: true, message: 'Buy order подтвержден через scan fallback' };
         } catch {
           // пробуем следующий candidate
