@@ -207,6 +207,7 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
     const remainingBalanceMinor = balanceMinor - priceTotal;
 
     const sessionID =
+      (typeof community.getSessionID === 'function' ? community.getSessionID() : null) ||
       community.sessionID ||
       extractSessionIDFromCookies(community._cookies || []);
 
@@ -263,11 +264,14 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
         market_hash_name: String(marketHashName),
         price_total: String(priceTotal),
         quantity: String(quantity),
+        billing_state: '',
+        save_my_address: '0',
       },
       headers: {
         Origin: 'https://steamcommunity.com',
         Referer: listingUrl,
         Accept: '*/*',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'X-Requested-With': 'XMLHttpRequest',
       },
       gzip: true,
