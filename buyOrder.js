@@ -241,13 +241,13 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
         resolve();
       };
 
-      if (typeof community.httpRequest === 'function') {
-        community.httpRequest(warmupOptions, cb);
+      if (community.request && typeof community.request.get === 'function') {
+        community.request.get(warmupOptions, cb);
         return;
       }
 
-      if (community.request && typeof community.request.get === 'function') {
-        community.request.get(warmupOptions, cb);
+      if (typeof community.httpRequest === 'function') {
+        community.httpRequest(warmupOptions, cb);
         return;
       }
 
@@ -279,11 +279,6 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
 
     const responsePayload = await new Promise((resolve, reject) => {
       const handle = (err, response, body) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-
         const statusCode = response?.statusCode || 0;
         let payload = body || {};
         if (typeof payload === 'string') {
@@ -292,6 +287,11 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
           } catch {
             payload = { raw: payload };
           }
+        }
+
+        if (err && !statusCode) {
+          reject(err);
+          return;
         }
 
         if (statusCode === 429) {
@@ -322,13 +322,13 @@ async function placeBuyOrderOnFullBalance(community, appId, marketHashName, targ
         resolve(payload);
       };
 
-      if (typeof community.httpRequest === 'function') {
-        community.httpRequest(requestOptions, handle);
+      if (community.request && typeof community.request.post === 'function') {
+        community.request.post(requestOptions, handle);
         return;
       }
 
-      if (community.request && typeof community.request.post === 'function') {
-        community.request.post(requestOptions, handle);
+      if (typeof community.httpRequest === 'function') {
+        community.httpRequest(requestOptions, handle);
         return;
       }
 

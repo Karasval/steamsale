@@ -164,9 +164,8 @@ async function main() {
           `✅ [BUY:${account.login}] quantity=${result.quantity}, unitPrice=${result.unitPrice}, remaining=${result.remainingBalance}`
         );
       } else {
-        console.log(
-          `⚠️ [BUY:${account.login}] ${result.message || result.error || 'Неуспешно'}`
-        );
+        console.log(`⚠️ [BUY:${account.login}] ${result.message || result.error || 'Неуспешно'}`);
+        console.log(`🧾 [BUY:${account.login}] Детали: ${JSON.stringify(result)}`);
       }
     } catch (error) {
       console.error(`❌ [BUY:${account.login}]`, error.message || error);
