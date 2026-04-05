@@ -125,6 +125,17 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
   }
 
   const targetConfirmationId = String(responsePayload?.confirmation?.confirmation_id || '');
+  let directError = '';
+
+  // Прямой путь: пытаемся подтвердить по confirmation_id из ответа createbuyorder.
+  if (targetConfirmationId) {
+    try {
+      await acceptByObjectIdSafe(community, identitySecret, targetConfirmationId);
+      return { confirmed: true, message: 'Buy order подтвержден через direct confirmation_id path' };
+    } catch (error) {
+      directError = error?.message || String(error);
+    }
+  }
 
   for (let i = 0; i < 5; i += 1) {
     const confirmations = await getConfirmationsSafe(community, identitySecret);
@@ -167,7 +178,12 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
     }
   }
 
-  return { confirmed: false, message: 'Не удалось найти подтверждение buy order' };
+  return {
+    confirmed: false,
+    message: directError
+      ? `Не удалось подтвердить buy order (direct path error: ${directError})`
+      : 'Не удалось найти подтверждение buy order',
+  };
 }
 
 async function fetchMyBuyOrdersSnapshot(community) {
