@@ -124,9 +124,17 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
     return { confirmed: false, message: 'Нужен identity_secret для подтверждения buy order' };
   }
 
+  const targetConfirmationId = String(responsePayload?.confirmation?.confirmation_id || '');
+
   for (let i = 0; i < 5; i += 1) {
     const confirmations = await getConfirmationsSafe(community, identitySecret);
     const marketConfirmation = confirmations.find((c) => {
+      const id = String(c?.id || '');
+      const creator = String(c?.creator || '');
+      if (targetConfirmationId && (id === targetConfirmationId || creator === targetConfirmationId)) {
+        return true;
+      }
+
       const type = String(c?.type || '').toLowerCase();
       const typeName = String(c?.typeName || '').toLowerCase();
       const headline = String(c?.headline || '').toLowerCase();
@@ -134,13 +142,24 @@ async function confirmBuyOrderIfNeeded(community, identitySecret, responsePayloa
         type.includes('market') ||
         typeName.includes('market') ||
         headline.includes('buy order') ||
-        headline.includes('purchase')
+        headline.includes('purchase') ||
+        headline.includes('подтверждение')
       );
     });
 
-    if (marketConfirmation?.id) {
-      await acceptByObjectIdSafe(community, identitySecret, marketConfirmation.id);
-      return { confirmed: true, message: 'Buy order подтвержден через scan fallback' };
+    if (marketConfirmation) {
+      const candidateObjectIds = [marketConfirmation.creator, marketConfirmation.id]
+        .map((v) => String(v || '').trim())
+        .filter(Boolean);
+
+      for (const objectId of candidateObjectIds) {
+        try {
+          await acceptByObjectIdSafe(community, identitySecret, objectId);
+          return { confirmed: true, message: 'Buy order подтвержден через scan fallback' };
+        } catch {
+          // пробуем следующий candidate
+        }
+      }
     }
 
     if (i < 4) {
