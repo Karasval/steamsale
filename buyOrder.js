@@ -528,8 +528,11 @@ async function placeBuyOrderOnFullBalance(
       };
     }
 
-    const priceTotal = unitPriceMinor * quantity;
-    const remainingBalanceMinor = balanceMinor - priceTotal;
+    // В createbuyorder поле `price_total` — это цена ЗА 1 предмет (в минимальных единицах),
+    // а не сумма по всем quantity.
+    const pricePerItemTotal = unitPriceMinor;
+    const estimatedSpendMinor = pricePerItemTotal * quantity;
+    const remainingBalanceMinor = balanceMinor - estimatedSpendMinor;
 
     const sessionID =
       (typeof community.getSessionID === 'function' ? community.getSessionID() : null) ||
@@ -587,7 +590,7 @@ async function placeBuyOrderOnFullBalance(
         currency: String(currencyId),
         appid: String(appId),
         market_hash_name: String(marketHashName),
-        price_total: String(priceTotal),
+        price_total: String(pricePerItemTotal),
         quantity: String(quantity),
         billing_state: '',
         save_my_address: '0',
