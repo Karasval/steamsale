@@ -1,0 +1,17 @@
+{
+  "name": "steamsale-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Steam bot: auth, market sell, full-balance buy orders",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "start:sell": "node index.js",
+    "start:buy": "node index-buy.js"
+  },
+  "dependencies": {
+    "steam-user": "^5.2.0",
+    "steamcommunity": "^3.49.1",
+    "steam-totp": "^2.1.2"
+  }
+}
