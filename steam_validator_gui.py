@@ -169,6 +169,7 @@ class SteamValidatorApp:
 
             self.progress.configure(maximum=total, value=0)
             valid_pairs: List[Tuple[str, str, Path]] = []
+            invalid_logins: List[str] = []
 
             self.log(f"[INFO] Найдено .maFile: {total}")
             self.log(f"[INFO] Потоков: {threads}")
@@ -192,15 +193,20 @@ class SteamValidatorApp:
                     self.root.after(0, lambda v=done_count: self.progress.configure(value=v))
 
                     if result:
-                        login, password, ma_path = result
-                        valid_pairs.append((login, password, ma_path))
+                        login, password, ma_path, is_valid = result
+                        if is_valid:
+                            valid_pairs.append((login, password, ma_path))
+                        else:
+                            invalid_logins.append(login)
+                    else:
+                        continue
 
             if self.stop_event.is_set():
                 self.log("[INFO] Выполнение остановлено до завершения.")
                 return
 
             valid_pairs.sort(key=lambda x: x[0].lower())
-            self._save_results(ma_folder, valid_pairs)
+            self._save_results(ma_folder, valid_pairs, invalid_logins)
             self.log(f"[DONE] Готово. Валидных аккаунтов: {len(valid_pairs)}")
 
         except Exception as exc:
@@ -272,7 +278,7 @@ class SteamValidatorApp:
 
     def _process_mafile(
         self, ma_file: Path, accounts_map: Dict[str, Tuple[str, str]], proxy_cycle
-    ) -> Optional[Tuple[str, str, Path]]:
+    ) -> Optional[Tuple[str, str, Path, bool]]:
         if self.stop_event.is_set():
             return None
 
@@ -280,11 +286,11 @@ class SteamValidatorApp:
         account = accounts_map.get(login)
         if not account:
             self.log(f"[WARN] Нет пары login:password для {ma_file.name}")
-            return None
+            return login, "", ma_file, False
 
         steamid = self._extract_steamid(ma_file)
         if not steamid:
-            return None
+            return login, account[1], ma_file, False
 
         url = f"https://steamcommunity.com/profiles/{steamid}"
         attempts = 3  # первая попытка + 2 повторные на других прокси
@@ -308,14 +314,14 @@ class SteamValidatorApp:
                 # Если профиль недоступен/приватен и нет явных признаков бана, считаем валидным.
                 if response.status_code >= 500:
                     self.log(f"[WARN] {login}: серверная ошибка Steam {response.status_code}, пропуск")
-                    return None
+                    return login, account[1], ma_file, False
 
                 if self._profile_has_ban(response.text):
                     self.log(f"[BAN] {login}: обнаружены признаки блокировки")
-                    return None
+                    return login, account[1], ma_file, False
 
                 self.log(f"[OK] {login}: валидный")
-                return account[0], account[1], ma_file
+                return account[0], account[1], ma_file, True
 
             except requests.exceptions.ProxyError as exc:
                 self.log(f"[WARN] {login}: ошибка прокси {proxy_raw}: {exc} (попытка {attempt}/{attempts})")
@@ -326,9 +332,11 @@ class SteamValidatorApp:
 
             if not proxy_cycle:
                 break
-        return None
+        return login, account[1], ma_file, False
 
-    def _save_results(self, ma_folder: Path, valid_pairs: List[Tuple[str, str, Path]]) -> None:
+    def _save_results(
+        self, ma_folder: Path, valid_pairs: List[Tuple[str, str, Path]], invalid_logins: List[str]
+    ) -> None:
         output_dir = ma_folder / "valid_accounts"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -342,6 +350,8 @@ class SteamValidatorApp:
                 self.log(f"[WARN] Не удалось скопировать {ma_path.name}: {exc}")
 
         (output_dir / "valid.txt").write_text("\n".join(valid_lines), encoding="utf-8")
+        sorted_invalid = sorted(set(invalid_logins), key=str.lower)
+        (output_dir / "invalid.txt").write_text("\n".join(sorted_invalid), encoding="utf-8")
         self.log(f"[INFO] Результаты сохранены: {output_dir}")
 
 
