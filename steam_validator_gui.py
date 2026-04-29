@@ -193,10 +193,10 @@ class SteamValidatorApp:
                     self.root.after(0, lambda v=done_count: self.progress.configure(value=v))
 
                     if result:
-                        login, password, ma_path, is_valid = result
+                        login, password, ma_path, is_valid, add_to_invalid = result
                         if is_valid:
                             valid_pairs.append((login, password, ma_path))
-                        else:
+                        elif add_to_invalid:
                             invalid_logins.append(login)
                     else:
                         continue
@@ -278,7 +278,7 @@ class SteamValidatorApp:
 
     def _process_mafile(
         self, ma_file: Path, accounts_map: Dict[str, Tuple[str, str]], proxy_cycle
-    ) -> Optional[Tuple[str, str, Path, bool]]:
+    ) -> Optional[Tuple[str, str, Path, bool, bool]]:
         if self.stop_event.is_set():
             return None
 
@@ -286,11 +286,11 @@ class SteamValidatorApp:
         account = accounts_map.get(login)
         if not account:
             self.log(f"[WARN] Нет пары login:password для {ma_file.name}")
-            return login, "", ma_file, False
+            return login, "", ma_file, False, True
 
         steamid = self._extract_steamid(ma_file)
         if not steamid:
-            return login, account[1], ma_file, False
+            return login, account[1], ma_file, False, True
 
         url = f"https://steamcommunity.com/profiles/{steamid}"
         attempts = 3  # первая попытка + 2 повторные на других прокси
@@ -314,14 +314,14 @@ class SteamValidatorApp:
                 # Если профиль недоступен/приватен и нет явных признаков бана, считаем валидным.
                 if response.status_code >= 500:
                     self.log(f"[WARN] {login}: серверная ошибка Steam {response.status_code}, пропуск")
-                    return login, account[1], ma_file, False
+                    return login, account[1], ma_file, False, True
 
                 if self._profile_has_ban(response.text):
                     self.log(f"[BAN] {login}: обнаружены признаки блокировки")
-                    return login, account[1], ma_file, False
+                    return login, account[1], ma_file, False, False
 
                 self.log(f"[OK] {login}: валидный")
-                return account[0], account[1], ma_file, True
+                return account[0], account[1], ma_file, True, False
 
             except requests.exceptions.ProxyError as exc:
                 self.log(f"[WARN] {login}: ошибка прокси {proxy_raw}: {exc} (попытка {attempt}/{attempts})")
@@ -332,7 +332,7 @@ class SteamValidatorApp:
 
             if not proxy_cycle:
                 break
-        return login, account[1], ma_file, False
+        return login, account[1], ma_file, False, True
 
     def _save_results(
         self, ma_folder: Path, valid_pairs: List[Tuple[str, str, Path]], invalid_logins: List[str]
