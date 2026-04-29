@@ -181,8 +181,7 @@ class SteamValidatorApp:
                 for ma_file in mafiles:
                     if self.stop_event.is_set():
                         break
-                    proxy = next(proxy_cycle) if proxy_cycle else None
-                    futures.append(executor.submit(self._process_mafile, ma_file, accounts_map, proxy))
+                    futures.append(executor.submit(self._process_mafile, ma_file, accounts_map, proxy_cycle))
 
                 done_count = 0
                 for fut in as_completed(futures):
@@ -272,7 +271,7 @@ class SteamValidatorApp:
         return any(keyword in page_text for keyword in BAN_KEYWORDS)
 
     def _process_mafile(
-        self, ma_file: Path, accounts_map: Dict[str, Tuple[str, str]], proxy_raw: Optional[str]
+        self, ma_file: Path, accounts_map: Dict[str, Tuple[str, str]], proxy_cycle
     ) -> Optional[Tuple[str, str, Path]]:
         if self.stop_event.is_set():
             return None
@@ -288,36 +287,45 @@ class SteamValidatorApp:
             return None
 
         url = f"https://steamcommunity.com/profiles/{steamid}"
-        proxies = self._build_proxy_dict(proxy_raw)
-
-        time.sleep(random.uniform(0.5, 2.0))
-        try:
-            response = requests.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=12,
-                proxies=proxies,
-                allow_redirects=True,
-            )
-
-            # Если профиль недоступен/приватен и нет явных признаков бана, считаем валидным.
-            if response.status_code >= 500:
-                self.log(f"[WARN] {login}: серверная ошибка Steam {response.status_code}, пропуск")
+        attempts = 3  # первая попытка + 2 повторные на других прокси
+        for attempt in range(1, attempts + 1):
+            if self.stop_event.is_set():
                 return None
 
-            if self._profile_has_ban(response.text):
-                self.log(f"[BAN] {login}: обнаружены признаки блокировки")
-                return None
+            proxy_raw = next(proxy_cycle) if proxy_cycle else None
+            proxies = self._build_proxy_dict(proxy_raw)
+            time.sleep(random.uniform(0.5, 2.0))
 
-            self.log(f"[OK] {login}: валидный")
-            return account[0], account[1], ma_file
+            try:
+                response = requests.get(
+                    url,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=12,
+                    proxies=proxies,
+                    allow_redirects=True,
+                )
 
-        except requests.exceptions.ProxyError as exc:
-            self.log(f"[WARN] {login}: ошибка прокси {proxy_raw}: {exc}")
-        except requests.exceptions.Timeout:
-            self.log(f"[WARN] {login}: таймаут запроса")
-        except requests.RequestException as exc:
-            self.log(f"[WARN] {login}: ошибка сети {exc}")
+                # Если профиль недоступен/приватен и нет явных признаков бана, считаем валидным.
+                if response.status_code >= 500:
+                    self.log(f"[WARN] {login}: серверная ошибка Steam {response.status_code}, пропуск")
+                    return None
+
+                if self._profile_has_ban(response.text):
+                    self.log(f"[BAN] {login}: обнаружены признаки блокировки")
+                    return None
+
+                self.log(f"[OK] {login}: валидный")
+                return account[0], account[1], ma_file
+
+            except requests.exceptions.ProxyError as exc:
+                self.log(f"[WARN] {login}: ошибка прокси {proxy_raw}: {exc} (попытка {attempt}/{attempts})")
+            except requests.exceptions.Timeout:
+                self.log(f"[WARN] {login}: таймаут запроса (попытка {attempt}/{attempts})")
+            except requests.RequestException as exc:
+                self.log(f"[WARN] {login}: ошибка сети {exc} (попытка {attempt}/{attempts})")
+
+            if not proxy_cycle:
+                break
         return None
 
     def _save_results(self, ma_folder: Path, valid_pairs: List[Tuple[str, str, Path]]) -> None:
