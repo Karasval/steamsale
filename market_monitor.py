@@ -272,7 +272,7 @@ class MarketMonitorApp:
         self.log("Monitoring started.")
         while not self.stop_event.is_set():
             self.process_cycle(listings_to_parse=listings_to_parse, single_proxy=proxy)
-            for _ in range(50):
+            for _ in range(100):
                 if self.stop_event.is_set():
                     break
                 time.sleep(0.1)
