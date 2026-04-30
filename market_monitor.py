@@ -126,6 +126,17 @@ class MarketMonitorApp:
             return None
         return {"http": proxy, "https": proxy}
 
+    def _proxy_attempts(self, single_proxy: str, max_attempts: int = 3) -> List[Optional[Dict[str, str]]]:
+        attempts: List[Optional[Dict[str, str]]] = []
+        if self.proxy_list:
+            count = min(max_attempts, len(self.proxy_list))
+            for _ in range(count):
+                attempts.append(self._next_proxy_dict(single_proxy))
+            return attempts
+
+        attempts.append(self._next_proxy_dict(single_proxy))
+        return attempts
+
     def _load_file_ids(self) -> None:
         if not self.file_path.exists():
             return
@@ -159,16 +170,18 @@ class MarketMonitorApp:
         print(full)
         self.log_queue.put(full)
 
-    def fetch_page(self, start: int, count: int, proxies: Optional[Dict[str, str]]) -> Optional[dict]:
+    def fetch_page(self, start: int, count: int, single_proxy: str) -> Optional[dict]:
         params = {"start": start, "count": count, "currency": 1}
-        try:
-            response = self.session.get(self.MARKET_RENDER_URL, params=params, timeout=10, proxies=proxies)
-            response.raise_for_status()
-            return response.json()
-        except (requests.RequestException, json.JSONDecodeError) as exc:
-            proxy_name = proxies.get("http") if proxies else "no-proxy"
-            self.log(f"Request error (start={start}, proxy={proxy_name}): {exc}")
-            return None
+        for proxies in self._proxy_attempts(single_proxy):
+            try:
+                response = self.session.get(self.MARKET_RENDER_URL, params=params, timeout=10, proxies=proxies)
+                response.raise_for_status()
+                return response.json()
+            except (requests.RequestException, json.JSONDecodeError) as exc:
+                proxy_name = proxies.get("http") if proxies else "no-proxy"
+                self.log(f"Request error (start={start}, proxy={proxy_name}): {exc}")
+                continue
+        return None
 
     def parse_listing(self, listing: dict, assets: dict) -> Optional[Tuple[str, int, float]]:
         listing_id = str(listing.get("listingid") or listing.get("listing_id") or "")
@@ -220,8 +233,7 @@ class MarketMonitorApp:
             if self.stop_event.is_set():
                 break
 
-            proxies = self._next_proxy_dict(single_proxy)
-            payload = self.fetch_page(start=start, count=10, proxies=proxies)
+            payload = self.fetch_page(start=start, count=10, single_proxy=single_proxy)
             if not payload:
                 time.sleep(random.uniform(0.2, 0.5))
                 continue
