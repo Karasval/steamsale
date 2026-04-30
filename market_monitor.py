@@ -6,11 +6,11 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import filedialog, scrolledtext
 
 
 class MarketMonitorApp:
@@ -23,7 +23,7 @@ class MarketMonitorApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Steam Market Monitor")
-        self.root.geometry("780x520")
+        self.root.geometry("840x560")
 
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.monitor_thread: Optional[threading.Thread] = None
@@ -33,6 +33,9 @@ class MarketMonitorApp:
         self.file_path = Path("found_items.txt")
         self.file_logged_ids: Set[str] = set()
         self._load_file_ids()
+
+        self.proxy_list: List[str] = []
+        self.proxy_index = 0
 
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -46,15 +49,18 @@ class MarketMonitorApp:
 
         tk.Label(controls, text="Listings to parse:").grid(row=0, column=0, sticky="w")
         self.count_var = tk.StringVar(value="100")
-        tk.Entry(controls, textvariable=self.count_var, width=12).grid(
-            row=0, column=1, padx=(5, 15), sticky="w"
-        )
+        tk.Entry(controls, textvariable=self.count_var, width=12).grid(row=0, column=1, padx=(5, 15), sticky="w")
 
-        tk.Label(controls, text="Proxy (optional):").grid(row=0, column=2, sticky="w")
+        tk.Label(controls, text="Single proxy (optional):").grid(row=0, column=2, sticky="w")
         self.proxy_var = tk.StringVar(value="")
-        tk.Entry(controls, textvariable=self.proxy_var, width=40).grid(
-            row=0, column=3, padx=5, sticky="we"
+        tk.Entry(controls, textvariable=self.proxy_var, width=34).grid(row=0, column=3, padx=5, sticky="we")
+
+        tk.Label(controls, text="Proxy file (optional):").grid(row=1, column=0, pady=(8, 0), sticky="w")
+        self.proxy_file_var = tk.StringVar(value="")
+        tk.Entry(controls, textvariable=self.proxy_file_var, width=58).grid(
+            row=1, column=1, columnspan=3, padx=(5, 5), pady=(8, 0), sticky="we"
         )
+        tk.Button(controls, text="Browse", command=self.select_proxy_file).grid(row=1, column=4, pady=(8, 0), sticky="w")
 
         controls.grid_columnconfigure(3, weight=1)
 
@@ -71,8 +77,54 @@ class MarketMonitorApp:
         tk.Label(buttons, text="Status:").pack(side=tk.LEFT, padx=(20, 4))
         tk.Label(buttons, textvariable=self.status_var, fg="blue").pack(side=tk.LEFT)
 
+        self.proxy_status_var = tk.StringVar(value="Proxies loaded: 0")
+        tk.Label(buttons, textvariable=self.proxy_status_var, fg="green").pack(side=tk.LEFT, padx=(20, 4))
+
         self.log_text = scrolledtext.ScrolledText(self.root, wrap=tk.WORD, state=tk.DISABLED)
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(8, 10))
+
+    def select_proxy_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select proxy file",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if path:
+            self.proxy_file_var.set(path)
+            self.load_proxies_from_file(path)
+
+    def load_proxies_from_file(self, file_path: str) -> None:
+        try:
+            lines = Path(file_path).read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError as exc:
+            self.log(f"Could not read proxy file: {exc}")
+            self.proxy_list = []
+            self.proxy_status_var.set("Proxies loaded: 0")
+            return
+
+        parsed: List[str] = []
+        for raw in lines:
+            proxy = raw.strip()
+            if not proxy or proxy.startswith("#"):
+                continue
+            if not proxy.startswith("http://") and not proxy.startswith("https://"):
+                proxy = f"http://{proxy}"
+            parsed.append(proxy)
+
+        self.proxy_list = list(dict.fromkeys(parsed))
+        self.proxy_index = 0
+        self.proxy_status_var.set(f"Proxies loaded: {len(self.proxy_list)}")
+        self.log(f"Loaded proxies from file: {len(self.proxy_list)}")
+
+    def _next_proxy_dict(self, single_proxy: str) -> Optional[Dict[str, str]]:
+        if self.proxy_list:
+            proxy = self.proxy_list[self.proxy_index % len(self.proxy_list)]
+            self.proxy_index += 1
+            return {"http": proxy, "https": proxy}
+
+        proxy = single_proxy.strip()
+        if not proxy:
+            return None
+        return {"http": proxy, "https": proxy}
 
     def _load_file_ids(self) -> None:
         if not self.file_path.exists():
@@ -110,16 +162,12 @@ class MarketMonitorApp:
     def fetch_page(self, start: int, count: int, proxies: Optional[Dict[str, str]]) -> Optional[dict]:
         params = {"start": start, "count": count, "currency": 1}
         try:
-            response = self.session.get(
-                self.MARKET_RENDER_URL,
-                params=params,
-                timeout=10,
-                proxies=proxies,
-            )
+            response = self.session.get(self.MARKET_RENDER_URL, params=params, timeout=10, proxies=proxies)
             response.raise_for_status()
             return response.json()
         except (requests.RequestException, json.JSONDecodeError) as exc:
-            self.log(f"Request error (start={start}): {exc}")
+            proxy_name = proxies.get("http") if proxies else "no-proxy"
+            self.log(f"Request error (start={start}, proxy={proxy_name}): {exc}")
             return None
 
     def parse_listing(self, listing: dict, assets: dict) -> Optional[Tuple[str, int, float]]:
@@ -134,12 +182,7 @@ class MarketMonitorApp:
         if not asset_id:
             return None
 
-        asset_description = (
-            assets.get(appid, {})
-            .get(contextid, {})
-            .get(asset_id, {})
-        )
-
+        asset_description = assets.get(appid, {}).get(contextid, {}).get(asset_id, {})
         descriptions = asset_description.get("descriptions")
         if not isinstance(descriptions, list):
             return None
@@ -154,9 +197,7 @@ class MarketMonitorApp:
 
         if template_value is None:
             return None
-
-        in_range = (1 <= template_value <= 5000) or (20000 <= template_value <= 25000)
-        if not in_range:
+        if not ((1 <= template_value <= 5000) or (20000 <= template_value <= 25000)):
             return None
 
         price_cents = listing.get("converted_price")
@@ -165,14 +206,9 @@ class MarketMonitorApp:
         if price_cents is None:
             return None
 
-        price = float(price_cents) / 100.0
-        return listing_id, template_value, price
+        return listing_id, template_value, float(price_cents) / 100.0
 
-    def process_cycle(self, listings_to_parse: int, proxy: str) -> None:
-        proxies = None
-        if proxy.strip():
-            proxies = {"http": proxy.strip(), "https": proxy.strip()}
-
+    def process_cycle(self, listings_to_parse: int, single_proxy: str) -> None:
         if listings_to_parse <= 0:
             self.log("Invalid listing count. Must be > 0.")
             return
@@ -184,6 +220,7 @@ class MarketMonitorApp:
             if self.stop_event.is_set():
                 break
 
+            proxies = self._next_proxy_dict(single_proxy)
             payload = self.fetch_page(start=start, count=10, proxies=proxies)
             if not payload:
                 time.sleep(random.uniform(0.2, 0.5))
@@ -196,7 +233,7 @@ class MarketMonitorApp:
                 time.sleep(random.uniform(0.2, 0.5))
                 continue
 
-            for _, listing in listinginfo.items():
+            for listing in listinginfo.values():
                 if self.stop_event.is_set():
                     break
 
@@ -234,7 +271,7 @@ class MarketMonitorApp:
     def _monitor_loop(self, listings_to_parse: int, proxy: str) -> None:
         self.log("Monitoring started.")
         while not self.stop_event.is_set():
-            self.process_cycle(listings_to_parse=listings_to_parse, proxy=proxy)
+            self.process_cycle(listings_to_parse=listings_to_parse, single_proxy=proxy)
             for _ in range(50):
                 if self.stop_event.is_set():
                     break
@@ -253,18 +290,17 @@ class MarketMonitorApp:
             self.log("Invalid listing count. Please enter an integer.")
             return
 
-        proxy = self.proxy_var.get().strip()
+        proxy_file = self.proxy_file_var.get().strip()
+        if proxy_file:
+            self.load_proxies_from_file(proxy_file)
 
+        proxy = self.proxy_var.get().strip()
         self.stop_event.clear()
         self.status_var.set("Running")
         self.start_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
 
-        self.monitor_thread = threading.Thread(
-            target=self._monitor_loop,
-            args=(listings_to_parse, proxy),
-            daemon=True,
-        )
+        self.monitor_thread = threading.Thread(target=self._monitor_loop, args=(listings_to_parse, proxy), daemon=True)
         self.monitor_thread.start()
 
     def _set_stopped_state(self) -> None:
@@ -279,7 +315,7 @@ class MarketMonitorApp:
 
 def main() -> None:
     root = tk.Tk()
-    app = MarketMonitorApp(root)
+    MarketMonitorApp(root)
     root.mainloop()
 
 
