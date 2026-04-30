@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Steam Market Monitor</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; max-width: 900px; }
+    .row { margin-bottom: 12px; }
+    label { display: block; margin-bottom: 4px; }
+    input, textarea, button { font-size: 14px; }
+    input[type="number"], textarea { width: 100%; padding: 8px; box-sizing: border-box; }
+    textarea { min-height: 120px; }
+    .controls { display: flex; gap: 10px; }
+    #status { font-weight: bold; }
+    #logArea {
+      margin-top: 14px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 10px;
+      height: 360px;
+      overflow-y: auto;
+      background: #111;
+      color: #d7ffd7;
+      font-family: Consolas, monospace;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>Steam Community Market Monitor</h1>
+
+  <div class="row">
+    <label for="listingsToParse">Listings to parse</label>
+    <input id="listingsToParse" type="number" min="10" step="10" value="100" />
+  </div>
+
+  <div class="row">
+    <label for="proxies">Proxies (one per line)</label>
+    <textarea id="proxies" placeholder="http://user:pass@ip:port\nhttp://ip:port"></textarea>
+  </div>
+
+  <div class="row controls">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn">Stop</button>
+    <div>Status: <span id="status">Stopped</span></div>
+  </div>
+
+  <div id="logArea"></div>
+
+  <script src="/script.js"></script>
+</body>
+</html>
