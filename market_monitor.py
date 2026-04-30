@@ -183,7 +183,7 @@ class MarketMonitorApp:
                 continue
         return None
 
-    def parse_listing(self, listing: dict, assets: dict) -> Optional[Tuple[str, int, float]]:
+    def parse_listing(self, listing: dict, assets: dict) -> Optional[Tuple[str, int, float, bool]]:
         listing_id = str(listing.get("listingid") or listing.get("listing_id") or "")
         if not listing_id:
             return None
@@ -210,8 +210,6 @@ class MarketMonitorApp:
 
         if template_value is None:
             return None
-        if not ((1 <= template_value <= 5000) or (20000 <= template_value <= 25000)):
-            return None
 
         price_cents = listing.get("converted_price")
         if price_cents is None:
@@ -219,7 +217,8 @@ class MarketMonitorApp:
         if price_cents is None:
             return None
 
-        return listing_id, template_value, float(price_cents) / 100.0
+        in_range = (1 <= template_value <= 5000) or (20000 <= template_value <= 25000)
+        return listing_id, template_value, float(price_cents) / 100.0, in_range
 
     def process_cycle(self, listings_to_parse: int, single_proxy: str) -> None:
         if listings_to_parse <= 0:
@@ -258,7 +257,11 @@ class MarketMonitorApp:
                 if not parsed:
                     continue
 
-                p_id, template_value, price = parsed
+                p_id, template_value, price, in_range = parsed
+                self.log(f"Listing template detected | ID: {p_id} | Template: {template_value}")
+                if not in_range:
+                    continue
+
                 found_this_cycle += 1
                 msg = f"ID: {p_id} | Template: {template_value} | Price: {price:.2f}"
                 self.log(msg)
